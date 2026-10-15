@@ -1,0 +1,83 @@
+# ===== 永不提交：凭据与个人数据 =====
+# 雅书会话 Cookie（真实登录凭据，泄露等于账号被接管）
+yabook_watch/session_cookies.txt
+yabook_watch/cookies.txt
+**/credentials.json
+**/*.cookie
+**/*.cookies
+
+# 个人书库数据（书单/书架/阅读进度/人工覆盖/拒绝与恢复记录）
+yabook_watch/state.json
+yabook_watch/tiers.json
+yabook_watch/library_files.txt
+yabook_watch/download_manifest_result.json
+yabook_watch/match_result.json
+yabook_watch/uncat_plan.json
+yabook_watch/uncat_match.json
+ebm/data/
+!ebm/data/.gitkeep
+
+# 管道为 tiers.json 留的备份/中间版本（含完整推荐与决策数据）
+yabook_watch/tiers.json.*
+yabook_watch/tiers_*.json
+yabook_watch/*.pre-*
+yabook_watch/*.bak-*
+yabook_watch/meta_cache.json
+
+# 抓取缓存与第三方内容（体积大 + 版权/ToS 风险）
+yabook_watch/post_details.json
+yabook_watch/book_meta.json
+yabook_watch/meta_cache.json
+yabook_watch/all_posts.json
+yabook_watch/hot_books.json
+yabook_watch/hot_batch_records.json
+yabook_watch/tiers_*.json
+
+# 巡检生成的报告（含书单与决策）
+yabook_watch/reports/
+
+# Google Books 等 API key（如被放在仓库内）
+.google_books_key
+*.key
+
+# ===== 构建产物与缓存 =====
+node_modules/
+.npm-cache/
+__pycache__/
+*.pyc
+dist/
+ebm/src/web/app.js
+ebm/src/web/read.js
+*.tsbuildinfo
+
+# ===== 运行日志与临时文件 =====
+logs/
+*.log
+ebm/logs/
+test/.tmp/
+*.tmp
+*.ebm-tmp
+
+# ===== 封面缓存（第三方图片）与真实书库截图（含个人书单）=====
+ebm/covers/
+ebm/docs/*.png
+docs/*.png
+
+# ===== 快照/备份（历史副本，不便公开）=====
+ebm/.snapshot-*/
+ebm/data/tiers-backup/
+*.bak-*
+*.corrupt-*
+
+# ===== 编辑器/系统 =====
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# ===== 个人运维文档/配置（本地保留，不对外发布）=====
+docs/RUNBOOK.md
+ebm/deploy/
+
+# ===== 不发布：可选集成的抓取/下载管道（含站点地址与解析逻辑，另有 ToS/版权考量）=====
+yabook_watch/

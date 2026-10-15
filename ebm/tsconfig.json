@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "sourceMap": false,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/server.ts",
+    "src/scanner.ts",
+    "src/indexer.ts",
+    "src/opds.ts",
+    "src/pipeline.ts",
+    "src/recommend.ts",
+    "src/recoArchive.ts",
+    "src/recoRestore.ts",
+    "src/paths.ts"
+  ]
+}

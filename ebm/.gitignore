@@ -1,0 +1,9 @@
+node_modules/
+.npm-cache/
+logs/
+src/web/app.js
+src/web/read.js
+covers/
+data/
+test/.tmp/
+.snapshot-*/

@@ -1,0 +1,24 @@
+{
+  "name": "ebm",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": false,
+  "description": "ebm - 局域网电子书管理器（搜索/浏览/下载/在线预览/OPDS）",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc --target ES2020 --lib ES2020,DOM,DOM.Iterable --strict --skipLibCheck src/web/app.ts && tsc --target ES2020 --lib ES2020,DOM,DOM.Iterable --strict --skipLibCheck src/web/read.ts",
+    "test": "npm run build && node --test --test-concurrency=1 test/*.test.js",
+    "test:fast": "node --test --test-concurrency=1 test/*.test.js",
+    "test:ui": "node scripts/ui-check.mjs",
+    "start": "node dist/server.js",
+    "dev": "npm run build && node dist/server.js",
+    "deploy": "npm run build && launchctl kickstart -k gui/$(id -u)/com.ebm.server"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

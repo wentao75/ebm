@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>ebm · 阅读</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>" />
+  <style>
+    :root { color-scheme: light dark; }
+    html, body { margin: 0; height: 100%; background: #525659; }
+    /* 关键工具类：read.html 独立于 app 样式，必须自带（缺了它 epubbox 白层会永久盖住 PDF） */
+    .hidden { display: none !important; }
+    .bar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 14px; background: rgba(28, 30, 32, .92); color: #eee;
+      font: 13px -apple-system, "PingFang SC", sans-serif;
+    }
+    .bar a { color: #8fd0ff; text-decoration: none; }
+    .bar .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar button { background: #3a3d40; color: #eee; border: none; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
+    #pdfbox { position: absolute; inset: 41px 0 0 0; overflow: auto; background: #525659; }
+    .pageholder {
+      position: relative; margin: 10px auto; background: #e8e6e1;
+      box-shadow: 0 2px 10px rgba(0,0,0,.5); overflow: hidden;
+      width: min(calc(100vw - 24px), 860px);
+    }
+    .pagecanvas { display: block; width: 100%; }
+    .pagenum {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #a09a90; font: 15px -apple-system, "PingFang SC", sans-serif;
+    }
+    /* —— 缩放 / 模式工具条 + 单页模式（v2.5）—— */
+    .zoombar {
+      position: fixed; top: 47px; right: 12px; z-index: 25;
+      display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end;
+      max-width: min(92vw, 620px);
+      background: rgba(28, 30, 32, .92); border: 1px solid #45484c; border-radius: 10px;
+      padding: 5px 8px; box-shadow: 0 2px 10px rgba(0, 0, 0, .35);
+      font: 12px -apple-system, "PingFang SC", sans-serif;
+    }
+    .zoombar .zb {
+      background: #34383c; color: #dcdcdc; border: 1px solid #4a4e52; border-radius: 6px;
+      padding: 3px 8px; font-size: 12px; cursor: pointer; font-family: inherit;
+    }
+    .zoombar .zb:hover { background: #43474c; color: #fff; }
+    .zoombar .zb.on { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+    .zoombar .zlabel { color: #9aa0a6; font-size: 11.5px; min-width: 46px; text-align: center; }
+    .zoombar .zsep { width: 1px; height: 18px; background: #4a4e52; margin: 0 3px; }
+    #pdfbox.single .pageholder { display: none; }
+    #pdfbox.single .pageholder.current { display: block; }
+    .toast {
+      position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+      background: #111; color: #eee; padding: 9px 18px; border-radius: 10px;
+      font: 13.5px -apple-system, "PingFang SC", sans-serif; z-index: 60;
+      max-width: 86vw; text-align: center; box-shadow: 0 4px 18px rgba(0, 0, 0, .35);
+    }
+    /* —— 阅读导航（v2.4）：悬浮按钮 + 目录抽屉 —— */
+    .fabwrap { position: fixed; right: 14px; bottom: 14px; z-index: 30; display: flex; flex-direction: column; gap: 8px; }
+    .fab {
+      width: 44px; height: 44px; border-radius: 50%; border: 1px solid #56585c;
+      background: rgba(40, 42, 45, .92); color: #eee; font-size: 19px; cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+    }
+    .fab:hover { background: #3a3d40; }
+    #tocpanel {
+      position: fixed; top: 41px; left: 0; bottom: 0; width: min(340px, 86vw);
+      background: #26282b; color: #ddd; z-index: 40; overflow: auto;
+      padding: 10px 6px 24px; box-shadow: 4px 0 18px rgba(0, 0, 0, .45);
+    }
+    #tocpanel h3 { margin: 6px 10px 10px; font-size: 14px; color: #9aa0a6; font-weight: 600; }
+    .tocitem {
+      display: block; width: 100%; text-align: left; background: none; border: 0;
+      color: #ccc; padding: 7px 12px; cursor: pointer; border-radius: 6px;
+      font: 13px -apple-system, "PingFang SC", sans-serif; line-height: 1.4;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tocitem:hover { background: #35383c; color: #fff; }
+    .tocitem .pg { float: right; color: #8a8f95; font-size: 12px; margin-left: 8px; }
+    .tocgrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; padding: 8px 12px; }
+    .tocgrid button {
+      background: #313438; color: #ccc; border: 0; border-radius: 6px;
+      padding: 6px 0; cursor: pointer; font: 12.5px ui-monospace, monospace;
+    }
+    .tocgrid button:hover { background: #40444a; color: #fff; }
+    #tocmask { position: fixed; inset: 0; z-index: 35; background: transparent; }
+    #epubbox { position: absolute; inset: 41px 0 0 0; background: #fff; }
+    #txtbox {
+      position: absolute; inset: 41px 0 0 0; overflow: auto;
+      background: #fdfdfb; color: #222;
+      font: 15px/1.8 "PingFang SC", serif; white-space: pre-wrap; padding: 24px;
+    }
+    #fallback {
+      position: absolute; inset: 41px 0 0 0; display: flex;
+      align-items: center; justify-content: center; color: #ccc;
+      font: 15px -apple-system, "PingFang SC", sans-serif; text-align: center; line-height: 2;
+    }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <a href="/">← 返回书库</a>
+    <span class="title" id="title"></span>
+    <span id="pageinfo"></span>
+    <span id="ver" style="opacity:.55;font-size:11px">阅读器 v2.5</span>
+    <button id="btnDownload">下载</button>
+  </div>
+  <div id="errbar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:99;background:#b3261e;color:#fff;font:12px/1.6 monospace;padding:8px 12px;max-height:38vh;overflow:auto;white-space:pre-wrap"></div>
+  <div id="pdfbox" class="hidden"></div>
+  <div id="epubbox"></div>
+  <pre id="txtbox" class="hidden"></pre>
+  <div id="fallback" class="hidden"></div>
+  <script src="./vendor/pdf.min.js"></script>
+  <script src="./vendor/epub.min.js"></script>
+  <script src="./read.js?v=6"></script>
+</body>
+</html>

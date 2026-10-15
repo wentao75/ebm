@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>ebm · 家庭书库</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>" />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📚 ebm <span class="sub">家庭书库</span></div>
+    <input id="search" type="search" placeholder="搜索书名 / 作者 / 标签 / 豆瓣分…（Ctrl+K）" autocomplete="off" />
+    <span id="stats" class="stats"></span>
+    <button id="btnMeta" class="btn" title="书目元数据补全（简介覆盖率 / 一键补简介）">🗂 元数据</button>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="group-title">我的书架</div>
+      <nav id="shelves" class="cats"></nav>
+      <div class="group-title">分类</div>
+      <nav id="cats" class="cats"></nav>
+    </aside>
+
+    <main class="main">
+      <div class="tabs">
+        <button class="tab active" data-tab="library">书库</button>
+        <button class="tab" data-tab="recent">新书速递</button>
+        <button class="tab" data-tab="reco">待下载确认 <span id="recoBadge" class="badge"></span></button>
+      </div>
+      <div id="searchNotice" class="notice hidden"></div>
+      <div id="metaNotice" class="notice hidden"></div>
+
+      <div id="view-library" class="view">
+        <div id="grid" class="grid"></div>
+        <div class="morewrap"><button id="moreLibrary" class="btn hidden">显示更多</button></div>
+        <div id="empty" class="empty hidden">没有匹配的书</div>
+      </div>
+
+      <div id="view-recent" class="view hidden">
+        <div id="gridRecent" class="grid"></div>
+        <div class="morewrap"><button id="moreRecent" class="btn hidden">显示更多</button></div>
+      </div>
+
+      <div id="view-reco" class="view hidden">
+        <div id="recoNotice" class="notice hidden"></div>
+        <div id="recoQueued" class="reco-queued hidden"></div>
+        <div class="reco-bar">
+          <span id="recoCount" class="stats"></span>
+          <span class="reco-spacer"></span>
+          <button class="btn tiny" id="recoAll">全选</button>
+          <button class="btn tiny" id="recoNone">清空</button>
+          <button class="btn tiny" id="recoRefresh">刷新</button>
+          <label class="reco-auto" title="勾选后，「确认下载」批准的同时立即开始下载（不再逐次弹确认）">
+            <input type="checkbox" id="recoAutoDl" /> 立即下载
+          </label>
+          <button class="btn tiny primary" id="recoApprove">确认下载</button>
+          <button class="btn tiny" id="recoReject">不要了</button>
+        </div>
+        <div id="recoStatus" class="reco-status muted"></div>
+        <div id="recoList" class="recolist"></div>
+        <div id="recoInLibrary" class="reco-status muted hidden"></div>
+        <div id="recoBrowse" class="reco-extra"></div>
+        <div id="recoArchive" class="reco-extra"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 图书详情（点击卡片打开；完整简介/目录/元数据，v1.5） -->
+  <div id="detailMask" class="mask hidden">
+    <div class="dialog detail">
+      <button class="dclose" id="detailClose" title="关闭（Esc）">✕</button>
+      <div class="dhead">
+        <div class="dcover" id="dCover"></div>
+        <div class="dmain">
+          <h3 id="dTitle"></h3>
+          <div class="dauthor" id="dAuthor"></div>
+          <div class="dinfo" id="dInfo"></div>
+          <div class="chips" id="dChips"></div>
+          <div class="actions" id="dActions"></div>
+        </div>
+      </div>
+      <div class="dsection" id="dIntroWrap">
+        <div class="dlabel" id="dIntroLabel">内容简介</div>
+        <div class="dintro" id="dIntro"></div>
+      </div>
+      <div class="dsection hidden" id="dTocWrap">
+        <div class="dlabel">目录</div>
+        <div class="dhint hidden" id="dTocHint">源目录未分条：原始数据把多条目录压成了一段无分隔文本，已按 卷/章/编号 尽量分行。</div>
+        <div class="dtoc" id="dToc"></div>
+      </div>
+      <div class="dsection hidden" id="dBioWrap">
+        <div class="dlabel">作者简介</div>
+        <div class="dintro" id="dBio"></div>
+      </div>
+      <div class="dpath" id="dPath"></div>
+    </div>
+  </div>
+
+  <!-- 书目元数据（补简介） -->
+  <div id="metaMask" class="mask hidden">
+    <div class="dialog meta">
+      <button class="dclose" id="metaClose" title="关闭（Esc）">✕</button>
+      <h3>书目元数据</h3>
+      <div class="metastat" id="metaStat">加载中…</div>
+      <div class="metasrc muted" id="metaSrc"></div>
+      <div class="metarow">
+        <label>本次最多补 <input type="number" id="metaLimit" value="80" min="1" max="200" /> 本</label>
+        <span class="muted" id="metaHint">补简介约 5 本/分钟（外部源限速），跑完自动刷新书库</span>
+      </div>
+      <div class="metaactions">
+        <button class="btn" id="metaBuild">登记新书</button>
+        <button class="btn primary" id="metaEnrich">补简介</button>
+        <button class="btn" id="metaCatalog">重建索引</button>
+        <button class="btn" id="metaAll">一键全流程</button>
+      </div>
+      <pre id="metaLog" class="logbox hidden"></pre>
+      <div class="metagaps">
+        <div class="metagaphead">
+          <span id="gapSummary" class="muted">待补清单加载中…</span>
+          <span class="gapspacer"></span>
+          <button class="btn" id="gapRefresh">刷新清单</button>
+        </div>
+        <div id="gapList" class="gaplist"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 编辑信息（书名 / 文件名 / 元数据） -->
+  <div id="editMask" class="mask hidden">
+    <div class="dialog edit">
+      <button class="dclose" id="edClose" title="关闭（Esc）">✕</button>
+      <h3>编辑信息</h3>
+      <div class="editrow">
+        <label for="edTitle">书名</label>
+        <input id="edTitle" placeholder="留空 = 按文件名自动解析" />
+        <button class="btn tiny" id="edTitleSuggest" title="用清理规则生成建议书名">按规则建议</button>
+      </div>
+      <div class="editrow">
+        <label for="edName">文件名</label>
+        <input id="edName" />
+        <button class="btn tiny" id="edSuggest" title="预览清理后的文件名">清理建议</button>
+      </div>
+      <div class="editrow">
+        <label></label>
+        <label class="editchk"><input type="checkbox" id="edRename" /> 同时重命名物理文件（用上面的书名作为文件名）</label>
+      </div>
+      <div id="edPreview" class="editpreview muted"></div>
+      <details class="editmore">
+        <summary>更多信息（作者 / 出版社 / 简介 / 目录…）</summary>
+        <div class="editfields">
+          <input id="edAuthor" placeholder="作者" />
+          <input id="edPublisher" placeholder="出版社" />
+          <input id="edYear" placeholder="出版日期" />
+          <input id="edTranslator" placeholder="译者" />
+          <input id="edPages" placeholder="页数" />
+          <input id="edIsbn" placeholder="ISBN" />
+          <input id="edDouban" placeholder="豆瓣评分" />
+          <input id="edTags" placeholder="标签（逗号分隔）" />
+        </div>
+        <textarea id="edIntro" rows="5" placeholder="内容简介"></textarea>
+        <textarea id="edToc" rows="4" placeholder="目录"></textarea>
+        <div class="muted editnote">只保存你改动过的字段；留空则保持原样（管道补全的数据不会被锁死）</div>
+      </details>
+      <div id="edConfirm" class="editconfirm hidden"></div>
+      <div class="editacts">
+        <button class="btn primary" id="edSave">保存</button>
+        <button class="btn" id="edUndo" title="把文件名与数据还原到上一次重命名之前">撤销上次重命名</button>
+        <span class="muted" id="edHint"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通用二次确认（标题/说明/按钮文案由动作决定，避免"确认不要了"却写着"开始下载"） -->
+  <div id="confirmMask" class="mask hidden">
+    <div class="dialog">
+      <h3 id="confirmTitle">请确认</h3>
+      <p id="confirmText"></p>
+      <p class="muted" id="confirmHint"></p>
+      <div class="dialog-actions">
+        <button class="btn" id="confirmCancel">取消</button>
+        <button class="btn primary" id="confirmOk">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 下载日志 -->
+  <div id="logMask" class="mask hidden">
+    <div class="dialog wide">
+      <h3>下载任务</h3>
+      <pre id="logBox" class="logbox"></pre>
+      <div class="dialog-actions">
+        <button class="btn" id="logClose">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="./app.js?v=8"></script>
+</body>
+</html>
