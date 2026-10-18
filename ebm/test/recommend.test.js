@@ -2,7 +2,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
-const { parseRecfile, parseLabel, flipMarks, LINE_RE, normalizeDouban, toView, normTitleKey, matchInLibrary } = require("../dist/recommend.js");
+const { parseRecfile, parseLabel, flipMarks, LINE_RE, normalizeDouban, toView, normTitleKey, matchInLibrary, readFailureHint } = require("../dist/recommend.js");
 
 // 真实文件结构的精简夹具（含表头里的 `[ ]` 干扰项、月份分组、明细行、已处理区）
 const FIXTURE = [
@@ -133,4 +133,12 @@ test("队列与书库匹配：精确/前后缀/长包含都算命中，短标题
   assert.equal(matchInLibrary("《完全无关的书名》某人", lib), null, "无关书名不得误判");
   assert.equal(matchInLibrary("《万历》", lib), null, "过短的书名不参与模糊匹配");
   assert.equal(matchInLibrary("", lib), null);
+});
+
+test("清单读取失败的提示要区分「不存在 / 脚本缺失 / iCloud 未下载」", () => {
+  const file = "/x/_推荐待确认.md";
+  assert.match(readFailureHint({ exists: true, dataless: true, scriptAvailable: true, file }), /iCloud.*占位.*自动取回失败/);
+  assert.match(readFailureHint({ exists: true, dataless: false, scriptAvailable: true, file }), /读取失败/);
+  assert.match(readFailureHint({ exists: false, dataless: false, scriptAvailable: true, file }), /还不存在/);
+  assert.match(readFailureHint({ exists: false, dataless: false, scriptAvailable: false, file }), /recommend\.py 不可用/);
 });

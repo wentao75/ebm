@@ -156,6 +156,24 @@ test("清单文件不完整：纯读报错（只读展示）；decide 会先 syn
   }
 });
 
+test("清单不可读时不崩：readable=false + 明确提示，恢复权限后自动可用", async () => {
+  const recPath = path.join(watch, "_推荐待确认.md");
+  const mode = (await fsp.stat(recPath)).mode;
+  try {
+    await fsp.chmod(recPath, 0o000); // 模拟读取失败（iCloud 仅云端/权限异常都会走这条路径）
+    const d = await (await fetch(`${srv.base}/api/recommend/pending`)).json();
+    assert.equal(d.fileExists, true, "文件存在");
+    assert.equal(d.readable, false, "应如实报告不可读");
+    assert.equal(d.fileDataless, false, "本地文件不是 iCloud 占位");
+    assert.match(String(d.error), /读取失败/, `提示应说明读取失败：${d.error}`);
+    assert.deepEqual(d.items, [], "不可读时不返回条目（界面只读展示）");
+  } finally {
+    await fsp.chmod(recPath, mode);
+  }
+  const after = await (await fetch(`${srv.base}/api/recommend/pending`)).json();
+  assert.equal(after.readable, true, "恢复权限后应立即可读");
+});
+
 test("待确认列表也看书库：未经批准直接下载（已在书库）的不再要求确认", async () => {
   const d = await (await fetch(`${srv.base}/api/recommend/pending`)).json();
   assert.equal(d.items.some((x) => x.id === 23003), false, "已入库的候选不应继续出现在待确认里");

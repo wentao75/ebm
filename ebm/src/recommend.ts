@@ -5,7 +5,7 @@
 //   2. 界面上的「确认下载 / 不要了」只做两件事：把对应行的方括号字符翻转成 x / -，
 //      然后调用 `recommend.py apply` —— 批准→tier1、拒绝→tier3+「用户拒绝」，全部由管道自己的逻辑完成
 //   3. 保留原文件的互操作：在 iPhone/Obsidian 上继续手写勾选依然有效
-import { spawn } from "child_process";
+import { execFile, spawn } from "child_process";
 import fsp from "fs/promises";
 import path from "path";
 import { currentJob, release, tryAcquire } from "./jobs";
@@ -163,10 +163,60 @@ async function scriptExists(): Promise<boolean> {
   }
 }
 
+/**
+ * iCloud「仅云端」占位文件：size>0 但本地块数为 0。
+ * 这种文件直接读取会失败（常见 [Errno 11] Resource deadlock avoided）。
+ */
+export async function isDataless(p: string): Promise<boolean> {
+  try {
+    const st = await fsp.stat(p);
+    return st.size > 0 && st.blocks === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 触发 iCloud 取回（macOS: `brctl download`）并等待真正落盘。
+ * 清单放在 iCloud 便于手机端勾选，但 iCloud 优化存储会把它驱逐成"仅云端" →
+ * 应用必须能自愈，否则每次都要人工点一下。
+ */
+export async function materialize(p: string, timeoutMs = 20000): Promise<boolean> {
+  if (!(await isDataless(p))) return true;
+  await new Promise<void>((resolve) => {
+    execFile("/usr/bin/brctl", ["download", p], { timeout: 10_000 }, () => resolve());
+  });
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await isDataless(p))) return true;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return !(await isDataless(p));
+}
+
+/** 读取失败时的说明（区分"文件不存在/脚本缺失/iCloud 未下载"） */
+export function readFailureHint(o: { exists: boolean; dataless: boolean; scriptAvailable: boolean; file: string }): string {
+  if (!o.exists) {
+    return o.scriptAvailable ? "清单文件还不存在（可点「刷新」让巡检重建）" : "管道 recommend.py 不可用，且清单文件不存在";
+  }
+  if (o.dataless) {
+    return `清单在 iCloud 中仅为占位、尚未下载到本机，自动取回失败：${o.file}（可在 Finder 右键「立即下载」或「保留已下载的项目」后重试）`;
+  }
+  return `清单文件读取失败：${o.file}`;
+}
+
 async function readText(): Promise<string | null> {
   try {
     return await fsp.readFile(REC_FILE, "utf-8");
   } catch {
+    // 最常见的失败原因：被 iCloud 驱逐成"仅云端" → 先取回，再读一次
+    if (await materialize(REC_FILE)) {
+      try {
+        return await fsp.readFile(REC_FILE, "utf-8");
+      } catch {
+        return null;
+      }
+    }
     return null;
   }
 }
@@ -361,6 +411,8 @@ export interface PendingResult {
   syncSkipped: boolean;
   /** 清单文件体积（字节） */
   fileBytes: number;
+  /** 清单是否被 iCloud 驱逐成"仅云端"（取回失败时为 true） */
+  fileDataless?: boolean;
   /** 历史归档状态（管道只保留最近 200 条已处理，旧的会被归档到这里） */
   archive: ArchiveStatus;
   file: string;
@@ -438,7 +490,8 @@ export async function readPending(
       items: [],
       itemsInLibrary: [],
       processedCount: 0,
-      error: exists ? `清单文件读取失败：${file}` : available ? "清单文件还不存在（可点「刷新」让巡检重建）" : "管道 recommend.py 不可用，且清单文件不存在",
+      fileDataless: await isDataless(file),
+      error: readFailureHint({ exists, dataless: await isDataless(file), scriptAvailable: available, file }),
     };
   }
   if (looksIncomplete(text)) {

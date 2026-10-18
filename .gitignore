@@ -81,3 +81,9 @@ ebm/deploy/
 
 # ===== 不发布：可选集成的抓取/下载管道（含站点地址与解析逻辑，另有 ToS/版权考量）=====
 yabook_watch/
+
+# ===== 个人一次性运维产物（含本机路径/私人清单，不属于项目）=====
+retire-calibre.sh
+calibre-preserve-list.json
+calibre-*.json
+retire-*.sh
