@@ -21,7 +21,7 @@ import { currentJob, isBusy } from "./jobs";
 import { doubanCandidates, doubanSubject, ensureYabookDetail, externalMetaRunning, gaps as metadataGaps, isTaskName, MAX_ENRICH_LIMIT, runMetadata, status as metadataStatus, yabookCandidates } from "./metadata";
 import { overrides, sanitizeOverride } from "./overrides";
 import { isRunning, MAX_IDS_PER_RUN, runPipeline } from "./pipeline";
-import { decide as decideRecommend, matchInLibrary, normTitleKey, normalizeDouban, readPending as readPendingRecommend, readQueued } from "./recommend";
+import { decide as decideRecommend, mainTitleKey, matchInLibrary, normTitleKey, normalizeDouban, readPending as readPendingRecommend, readQueued } from "./recommend";
 import { queryArchive } from "./recoArchive";
 import { restoreRejected, restoreStatus } from "./recoRestore";
 import { pathAliases, performRename, planRename, RenameLog, suggestFileName, undoRename } from "./rename";
@@ -520,10 +520,10 @@ app.get("/api/recommend/pending", async (c) => {
   try {
     // 默认纯读取；界面进入/刷新时带 ?sync=1 让管道重建清单（GET 本身不产生副作用）
     const wantSync = c.req.query("sync") === "1";
-    const libKeys = index.entries.map((e) => ({
-      rel: e.rel,
-      key: normTitleKey(e.rel.split("/").pop() || e.rel),
-    }));
+    const libKeys = index.entries.map((e) => {
+      const base = e.rel.split("/").pop() || e.rel;
+      return { rel: e.rel, key: normTitleKey(base), main: mainTitleKey(base) };
+    });
     const [pending, queued] = await Promise.all([readPendingRecommend(wantSync, libKeys), readQueued(libKeys)]);
     return json(c, {
       ...pending,
@@ -541,7 +541,10 @@ app.get("/api/recommend/pending", async (c) => {
 app.post("/api/recommend/decide", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { approve?: unknown; reject?: unknown } | null;
   if (!body) return json(c, { error: '请求体须为 {"approve":[…],"reject":[…]}' }, 400);
-  const libKeys = index.entries.map((e) => ({ rel: e.rel, key: normTitleKey(e.rel.split("/").pop() || e.rel) }));
+  const libKeys = index.entries.map((e) => {
+    const base = e.rel.split("/").pop() || e.rel;
+    return { rel: e.rel, key: normTitleKey(base), main: mainTitleKey(base) };
+  });
   const result = await decideRecommend(body.approve, body.reject, libKeys);
   if (result.ok) return json(c, result);
   const status = result.busy ? 409 : result.scriptMissing ? 502 : 400;

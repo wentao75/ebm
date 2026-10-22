@@ -304,10 +304,30 @@ export function normTitleKey(s: string): string {
 }
 
 /**
- * 队列条目是否已存在于书库（书名归一化后：完全相等，或较短一方 ≥6 字且互相包含）。
+ * 主标题键：去掉副标题（冒号/破折号后）与括注后再归一化。
+ * 场景：队列里的书名常带副标题（《谈钱才不伤感情：直面家人、朋友的财务界线》），
+ * 而入库文件名只保留主标题（《谈钱才不伤感情》李雅雯.pdf）→ 必须按主标题比对才认得出。
+ */
+export function mainTitleKey(raw: string): string {
+  const clean = String(raw || "")
+    .replace(/\.[A-Za-z0-9]{1,6}$/, "")
+    .replace(/[\[\(（【][^\]\)）】]*[\]\)）】]/g, "");
+  // 优先取《》内的书名（入库文件名形如《书名》作者，作者不该参与主标题比对）
+  const inBook = /《([^》]+)》/.exec(clean);
+  const t = inBook ? inBook[1] : clean;
+  const main = t.split(/[：:]|——|—|–/)[0] || t;
+  return normTitleKey(main);
+}
+
+/**
+ * 队列条目是否已存在于书库：
+ *   ① 整名归一化后完全相等
+ *   ② 一方是另一方的前缀/后缀（≥5 字）
+ *   ③ 包含关系（≥8 字）
+ *   ④ **主标题相同**（≥4 字，忽略副标题差异）
  * 返回命中的书库 rel，未命中返回 null。
  */
-export function matchInLibrary(title: string, library: Array<{ rel: string; key: string }>): string | null {
+export function matchInLibrary(title: string, library: Array<{ rel: string; key: string; main?: string }>): string | null {
   const key = normTitleKey(title);
   if (!key) return null;
   for (const lib of library) {
@@ -322,6 +342,13 @@ export function matchInLibrary(title: string, library: Array<{ rel: string; key:
   for (const lib of library) {
     const [shorter, longer] = key.length <= lib.key.length ? [key, lib.key] : [lib.key, key];
     if (shorter.length >= 8 && longer.includes(shorter)) return lib.rel;
+  }
+  // 主标题相同（副标题/详略差异）：如《谈钱才不伤感情：直面家人、朋友的财务界线》↔《谈钱才不伤感情》李雅雯.pdf
+  const main = mainTitleKey(title);
+  if (main.length >= 4) {
+    for (const lib of library) {
+      if (lib.main && lib.main === main) return lib.rel;
+    }
   }
   return null;
 }
@@ -352,7 +379,7 @@ export interface QueuedResult {
 }
 
 export async function readQueued(
-  library: Array<{ rel: string; key: string }> = [],
+  library: Array<{ rel: string; key: string; main?: string }> = [],
 ): Promise<QueuedResult> {
   const [tiersRaw, stateRaw] = await Promise.all([
     fsp.readFile(path.join(WATCH_DIR, "tiers.json"), "utf-8").catch(() => "{}"),
@@ -434,7 +461,7 @@ function looksIncomplete(text: string): boolean {
  */
 export async function readPending(
   syncFirst = false,
-  library: Array<{ rel: string; key: string }> = [],
+  library: Array<{ rel: string; key: string; main?: string }> = [],
 ): Promise<PendingResult> {
   const file = REC_FILE;
   const available = await scriptExists();
@@ -556,7 +583,7 @@ function cleanIds(v: unknown): number[] {
 export async function decide(
   approveRaw: unknown,
   rejectRaw: unknown,
-  library: Array<{ rel: string; key: string }> = [],
+  library: Array<{ rel: string; key: string; main?: string }> = [],
 ): Promise<DecideResult> {
   const approve = cleanIds(approveRaw);
   const reject = cleanIds(rejectRaw);

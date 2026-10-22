@@ -86,4 +86,7 @@ yabook_watch/
 retire-calibre.sh
 calibre-preserve-list.json
 calibre-*.json
+calibre-*.md
 retire-*.sh
+preserve-calibre*.py
+verify-calibre*.py

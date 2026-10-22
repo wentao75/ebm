@@ -1808,6 +1808,7 @@ async function startPipeline(ids: number[]): Promise<void> {
   const box = $("#logBox");
   box.textContent = `[ebm] 开始下载 ${ids.length} 本（帖子 ID: ${ids.slice(0, 10).join(", ")}${ids.length > 10 ? " …" : ""}）\n下面是雅书管道的原始输出（第一行是它执行的命令）：\n\n`;
   $("#logMask").classList.remove("hidden");
+  let full = "";
   try {
     const res = await fetch("/api/pipeline/download", {
       method: "POST",
@@ -1823,12 +1824,28 @@ async function startPipeline(ids: number[]): Promise<void> {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      box.textContent += dec.decode(value, { stream: true });
+      const chunk = dec.decode(value, { stream: true });
+      full += chunk;
+      box.textContent += chunk;
       box.scrollTop = box.scrollHeight;
     }
   } catch (err) {
     box.textContent += `\n[error] ${String(err)}\n`;
   }
+  // 结果摘要：管道每本一行「… -> OK …」或「… -> …失败…」，直接告诉用户成败，
+  // 避免"看到一堆提示却不知道到底下了没下"
+  const okCount = (full.match(/->\s*OK\b/g) || []).length;
+  const failLines = full.split("\n").filter((l) => /->\s*[^\n]*失败/.test(l));
+  if (okCount || failLines.length) {
+    const parts: string[] = [];
+    if (okCount) parts.push(`成功 ${okCount} 本`);
+    if (failLines.length) parts.push(`失败 ${failLines.length} 本`);
+    const reason = failLines[0] ? failLines[0].split("->").pop()?.trim().slice(0, 40) : "";
+    toast(`下载结束：${parts.join("，")}${reason ? `（${reason}）` : ""}${failLines.length ? "；失败的书仍在待下载队列，可稍后重试或等次日巡检" : ""}`);
+  } else if (full.includes("HTTP ") || full.includes("[error]")) {
+    toast("下载未成功启动，详见日志");
+  }
+  if (activeTab === "reco") void loadReco(); // 成功的书入库后立刻从队列消失
 }
 
 // ---------- 事件与启动 ----------

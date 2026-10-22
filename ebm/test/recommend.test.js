@@ -2,7 +2,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("path");
-const { parseRecfile, parseLabel, flipMarks, LINE_RE, normalizeDouban, toView, normTitleKey, matchInLibrary, readFailureHint } = require("../dist/recommend.js");
+const { parseRecfile, parseLabel, flipMarks, LINE_RE, normalizeDouban, toView, normTitleKey, matchInLibrary, mainTitleKey, readFailureHint } = require("../dist/recommend.js");
 
 // 真实文件结构的精简夹具（含表头里的 `[ ]` 干扰项、月份分组、明细行、已处理区）
 const FIXTURE = [
@@ -141,4 +141,22 @@ test("清单读取失败的提示要区分「不存在 / 脚本缺失 / iCloud �
   assert.match(readFailureHint({ exists: true, dataless: false, scriptAvailable: true, file }), /读取失败/);
   assert.match(readFailureHint({ exists: false, dataless: false, scriptAvailable: true, file }), /还不存在/);
   assert.match(readFailureHint({ exists: false, dataless: false, scriptAvailable: false, file }), /recommend\.py 不可用/);
+});
+
+test("主标题匹配：队列名带副标题、入库文件名只有主标题时也能认出（真实案例）", () => {
+  const lib = [
+    { rel: "心理学/《谈钱才不伤感情》李雅雯.pdf", key: normTitleKey("《谈钱才不伤感情》李雅雯.pdf"), main: mainTitleKey("《谈钱才不伤感情》李雅雯.pdf") },
+    { rel: "科普/《血糖密码》[加]杰森·冯.pdf", key: normTitleKey("《血糖密码》[加]杰森·冯.pdf"), main: mainTitleKey("《血糖密码》[加]杰森·冯.pdf") },
+  ];
+  // 队列里的书名带副标题（站点标题）——曾因此"下载成功却仍挂在待下载队列"
+  assert.equal(
+    matchInLibrary("《谈钱才不伤感情：直面家人、朋友的财务界线》李雅雯", lib),
+    "心理学/《谈钱才不伤感情》李雅雯.pdf",
+    "带副标题的队列书名应命中只含主标题的入库文件",
+  );
+  assert.equal(mainTitleKey("《谈钱才不伤感情：直面家人、朋友的财务界线》李雅雯"), "谈钱才不伤感情");
+  assert.equal(matchInLibrary("《血糖密码》[加]杰森·冯", lib), "科普/《血糖密码》[加]杰森·冯.pdf");
+  // 负例：主标题不同不得误判；过短主标题不参与
+  assert.equal(matchInLibrary("《谈钱的艺术：理财入门》某人", lib), null);
+  assert.equal(matchInLibrary("《书：副标题》某人", lib), null, "主标题过短（<4 字）不参与匹配");
 });
