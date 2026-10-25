@@ -6,6 +6,7 @@
 // 覆盖：书库页书架分组/卡片按钮/偏好记忆/默认进入规则、阅读器缩放与单页模式与续读、截图像素回归
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
+import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -109,6 +110,36 @@ const STATE_JS = `(() => {
   });
 })()`;
 
+/** 假阅读器（讯飞起点阅读器接口）：GET /config + POST /upload（字段 sfile） */
+function startFakeDevice(limit = 200) {
+  const received = [];
+  const srv = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/config") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ fileSizeLimit: limit }));
+      return;
+    }
+    if (req.method === "POST" && req.url === "/upload") {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const buf = Buffer.concat(chunks);
+        const text = buf.toString("utf8");
+        const headEnd = buf.indexOf("\r\n\r\n");
+        const tailStart = buf.lastIndexOf("\r\n--");
+        received.push({ field: /name="([^"]+)"/.exec(text)?.[1], bytes: buf.subarray(headEnd + 4, tailStart) });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end('{"msg":"上传成功"}');
+      });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  return new Promise((r) => srv.listen(0, "127.0.0.1", () => r({ url: `http://127.0.0.1:${srv.address().port}`, received, close: () => new Promise((x) => srv.close(x)) })));
+}
+
+
 async function main() {
   // 260 本的隔离书库：既覆盖增量渲染分屏，也覆盖书架与阅读器场景
   const files = [
@@ -124,6 +155,7 @@ async function main() {
   let srv;
   let chrome;
   let cdp;
+  let fakeDevice;
   try {
     // 推荐条目的"完整详情"来自 post_details：夹具里补上这几个 id（否则详情接口无数据可取）
     const recoMeta = {
@@ -143,7 +175,8 @@ async function main() {
         meta: { 作者: "[澳]埃玛·爱德华兹", 出版社: "机械工业出版社", 出版日期: "2025-7-1", 页数: "280" },
       },
     };
-    srv = await startServer({ libraryRoot: lib.root, dataDir, metaFixture: recoMeta, tiersFixture: TIERS_FIXTURE, withRecommend: true });
+    fakeDevice = await startFakeDevice();
+    srv = await startServer({ libraryRoot: lib.root, dataDir, metaFixture: recoMeta, tiersFixture: TIERS_FIXTURE, withRecommend: true, extraEnv: { EBM_PUSH_TARGET: fakeDevice.url } });
     chrome = spawn(CHROME, [
       "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-extensions",
       `--user-data-dir=${profile}`, `--remote-debugging-port=${DEBUG_PORT}`,
@@ -432,6 +465,18 @@ async function main() {
     check("详情有封面或占位块", detail.coverShown === true);
     const introLabel = await cdp.eval(`document.getElementById('dIntroLabel').textContent`);
     check("详情标注简介来源", introLabel.includes("简介来源") || introLabel === "内容简介", introLabel);
+
+    // 推送到阅读器：设备在线 → 按钮可用 → 点击真实推送（假设备收到字段 sfile）
+    await waitFor(async () => (await cdp.eval(`document.getElementById('dPush')?.disabled === false`)) === true, { timeout: 10000 });
+    const pushLabel = await cdp.eval(`document.getElementById('dPush').textContent`);
+    check("详情有「发送到阅读器」且设备在线时可用", String(pushLabel).includes("发送到阅读器"), String(pushLabel));
+    await cdp.eval(`document.getElementById('dPush').click()`);
+    const pushToast = await waitFor(async () => {
+      const t = await cdp.eval(`document.getElementById('toast').textContent`);
+      return String(t).includes("已发送到阅读器") ? t : "";
+    }, { timeout: 20000 });
+    check("点击后真实推送到设备（成功提示）", String(pushToast).includes("已发送到阅读器"), String(pushToast).slice(0, 60));
+    check("设备收到推送（字段 sfile）", fakeDevice.received.length >= 1 && fakeDevice.received[0].field === "sfile", `收到 ${fakeDevice.received.length} 次`);
     // 详情内切换书架
     await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').click()`);
     await sleep(1200);
@@ -1242,6 +1287,7 @@ async function main() {
     cdp?.close();
     chrome?.kill("SIGKILL");
     if (srv) await srv.stop();
+    if (fakeDevice) await fakeDevice.close();
     await cleanup(profile);
     await cleanup(dataDir);
     await cleanup(lib.root);

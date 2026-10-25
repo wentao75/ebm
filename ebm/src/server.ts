@@ -26,6 +26,7 @@ import { queryArchive } from "./recoArchive";
 import { restoreRejected, restoreStatus } from "./recoRestore";
 import { pathAliases, performRename, planRename, RenameLog, suggestFileName, undoRename } from "./rename";
 import { BookFile, LIBRARY_ROOT, LibraryScanner } from "./scanner";
+import { probeDevice, pushFile, pushTarget } from "./push";
 import { isShelfName, normPage, ShelfStore, validRel } from "./shelves";
 
 const PORT = parseInt(process.env.EBM_PORT || "6722", 10);
@@ -592,6 +593,34 @@ app.get("/api/reco/archive", async (c) => {
 });
 
 // ---------- 一键下载：流式日志 ----------
+// 推送到局域网阅读器（讯飞起点阅读器：设备本地 /config + /upload，字段 sfile）
+app.get("/api/push/status", async (c) => json(c, await probeDevice()));
+
+app.post("/api/push/send", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { rel?: unknown } | null;
+  const rel = typeof body?.rel === "string" ? body.rel : "";
+  if (!rel) return json(c, { ok: false, error: "缺少 rel" }, 400);
+  const abs = safeResolve(rel);
+  if (!abs) return json(c, { ok: false, error: "非法路径" }, 403);
+  let st = await fsp.stat(abs).catch(() => null);
+  if (!st || !st.isFile()) return json(c, { ok: false, error: "文件不存在（可能 iCloud 未下载）" }, 404);
+  // iCloud 云端文件：先触发取回，最多等 60s（大文件可能要更久，界面可稍后重试）
+  if (isDataless(st)) {
+    requestMaterialize(abs);
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      if (await quickReady(abs)) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    st = await fsp.stat(abs).catch(() => null);
+    if (!st || isDataless(st)) {
+      return json(c, { ok: false, pendingMaterialize: true, error: "该书在 iCloud 尚未取回完成，已开始下载，请稍后重试" }, 202);
+    }
+  }
+  const r = await pushFile(abs, path.basename(rel));
+  return json(c, r, r.ok ? 200 : 502);
+});
+
 app.post("/api/pipeline/download", async (c) => {
   if (isRunning()) return c.text("已有下载任务在执行中", 409);
   let ids: number[];

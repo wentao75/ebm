@@ -1155,6 +1155,72 @@ function detailToggleHtml(rel: string): string {
     .join("");
 }
 
+// ---------- 推送到局域网阅读器（讯飞起点阅读器）----------
+let pushStatusCache: { at: number; reachable: boolean; target: string; fileSizeLimit?: number; error?: string } | null = null;
+
+async function loadPushStatus(force = false): Promise<NonNullable<typeof pushStatusCache>> {
+  if (!force && pushStatusCache && Date.now() - pushStatusCache.at < 30_000) return pushStatusCache;
+  let d: { reachable?: boolean; target?: string; fileSizeLimit?: number; error?: string } = {};
+  try {
+    d = (await (await fetch("/api/push/status")).json()) as typeof d;
+  } catch {
+    d = { reachable: false, error: "状态查询失败" };
+  }
+  pushStatusCache = { at: Date.now(), reachable: d.reachable === true, target: String(d.target || ""), fileSizeLimit: d.fileSizeLimit, error: d.error };
+  return pushStatusCache;
+}
+
+/** 按钮反映设备在线状态（未连接时禁用并说明） */
+async function refreshPushHint(rel: string): Promise<void> {
+  const st = await loadPushStatus();
+  if (detailRel !== rel) return;
+  const btn = document.getElementById("dPush") as HTMLButtonElement | null;
+  if (!btn) return;
+  if (st.reachable) {
+    btn.disabled = false;
+    btn.textContent = "📤 发送到阅读器";
+    btn.title = `设备已连接：${st.target}${st.fileSizeLimit ? ` · 单文件上限 ${st.fileSizeLimit}MB` : ""}`;
+  } else {
+    btn.disabled = true;
+    btn.textContent = "📤 阅读器未连接";
+    btn.title = `设备未连接：${st.target}${st.error ? `（${st.error}）` : ""} — 请在阅读器上打开传书页面`;
+  }
+}
+
+async function sendToDevice(): Promise<void> {
+  const rel = detailRel;
+  if (!rel) return;
+  const book = allBooks.find((x) => x.rel === rel);
+  const btn = document.getElementById("dPush") as HTMLButtonElement | null;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "📤 发送中…";
+  }
+  try {
+    const res = await fetch("/api/push/send", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rel }),
+    });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; bytes?: number; ms?: number; message?: string; error?: string };
+    if (res.ok && d.ok) {
+      const mb = ((d.bytes || 0) / 1024 / 1024).toFixed(1);
+      toast(`已发送到阅读器：${book?.title || rel}（${mb}MB · ${((d.ms || 0) / 1000).toFixed(1)}s）${d.message ? " · " + d.message : ""}`);
+    } else {
+      toast(`发送失败：${d.error || "HTTP " + res.status}`);
+      pushStatusCache = null;
+    }
+  } catch (err) {
+    toast(`发送异常：${String(err)}`);
+  } finally {
+    const b = document.getElementById("dPush") as HTMLButtonElement | null;
+    if (b) {
+      b.disabled = false;
+      b.textContent = "📤 发送到阅读器";
+    }
+  }
+}
+
 function refreshDetailActions(): void {
   const rel = detailRel;
   if (!rel || $("#detailMask").classList.contains("hidden")) return;
@@ -1168,8 +1234,10 @@ function refreshDetailActions(): void {
   actions.innerHTML = `
     ${canRead ? `<a class="btn read" href="${readUrl(b)}">${rec?.page ? "▶ 继续阅读" : "📖 阅读"}</a>` : `<a class="btn read" disabled>预览不可用</a>`}
     <a class="btn primary dl-link" href="${fileUrl(b.rel, "attachment")}" download="${txt(b.title)}.${b.ext.toLowerCase()}">⬇ 下载</a>
+    <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 阅读器检测中…</button>
     ${detailToggleHtml(rel)}
     <button class="btn editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>`;
+  void refreshPushHint(rel);
 }
 
 async function openDetail(rel: string): Promise<void> {
@@ -1976,7 +2044,9 @@ async function boot(): Promise<void> {
   $("#metaAll").addEventListener("click", () => void runMetaTasks(["build", "enrich", "catalog"]));
   $("#detailClose").addEventListener("click", closeDetail);
   $("#dActions").addEventListener("click", (ev) => {
-    if ((ev.target as HTMLElement).classList.contains("editbtn")) void openEditFromDetail();
+    const t = ev.target as HTMLElement;
+    if (t.classList.contains("editbtn")) void openEditFromDetail();
+    if (t.id === "dPush") void sendToDevice();
   });
   $("#edClose").addEventListener("click", closeEdit);
   $("#editMask").addEventListener("click", (ev) => {

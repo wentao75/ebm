@@ -227,7 +227,7 @@ const TIERS_FIXTURE = {
   "23003": { tier: 2, folder: "历史", note: "T2 但已入库", title: "《明朝那些事儿》当年明月" },
 };
 
-async function startServer({ libraryRoot, dataDir, watchDir, port, metaFixture = META_FIXTURE, bookMetaFixture = BOOK_META_FIXTURE, cacheFixture = META_CACHE_FIXTURE, uncatFixture = UNCUT_MATCH_FIXTURE, tiersFixture = null, withRecommend = false }) {
+async function startServer({ libraryRoot, dataDir, watchDir, port, metaFixture = META_FIXTURE, bookMetaFixture = BOOK_META_FIXTURE, cacheFixture = META_CACHE_FIXTURE, uncatFixture = UNCUT_MATCH_FIXTURE, tiersFixture = null, withRecommend = false, extraEnv = {} }) {
   const listenPort = port || (await freePort());
   const watch = watchDir || path.join(dataDir, "watch");
   if (metaFixture) {
@@ -266,6 +266,7 @@ async function startServer({ libraryRoot, dataDir, watchDir, port, metaFixture =
     EBM_EXTERNAL_TASK_GUARD: "0", // 测试不依赖宿主机进程表
     YABOOK_RECFILE: recFile, // 待确认清单写到临时目录，绝不碰真实 iCloud 文件
     YABOOK_WATCH: watch, // ⚠ 必须：否则真实 recommend.py 会去读写仓库里的 tiers.json
+    ...extraEnv,
   };
   const proc = spawn(process.execPath, [path.join(EBM_DIR, "dist", "server.js")], {
     env,

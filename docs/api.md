@@ -260,6 +260,17 @@
 ### 一键下载（既有接口，配合使用）
 `POST /api/pipeline/download { "ids": [...] }` —— 界面上的「确认并立即下载」= decide(approve) 成功后立刻调用它（**单次上限 30 本**，由 `maxDownload` 告知前端）。
 
+### `GET /api/push/status`
+探测局域网阅读器是否在线（讯飞起点阅读器：设备只在「传书」页面打开时监听）。
+- 响应 `{ target, reachable, fileSizeLimit?, ms, error? }`；`fileSizeLimit` 为 pdf/mobi/azw3 单文件上限（MB）
+
+### `POST /api/push/send`
+把书库里的书推送到阅读器。
+- 请求 `{ "rel": "心理学/《某书》某人.pdf" }`
+- 响应 `{ ok, target, bytes, ms, message?, error? }`；`message` 通常是设备返回的"上传成功"
+- 实现：multipart 字段 **`sfile`** 推送到 `POST <target>/upload`；iCloud 云端书先取回（最多等 60s，未完成返回 **202** + `pendingMaterialize: true`）
+- 错误：设备离线/地址不对 → **502**（提示"请先在阅读器上打开「传书」页面"）· 超过设备上限 → 502 并说明 · 文件不存在 → 404 · 路径非法 → 403
+
 ### `GET /api/reco/detail?id=<帖 id>`
 推荐条目的**完整详情**（列表接口只有书名/目录/评分）。
 - 响应 `{ ok, id, title, author, author_bio, intro, toc, tags, publisher, year, pages, translator, douban }`
