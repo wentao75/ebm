@@ -7,3 +7,6 @@ covers/
 data/
 test/.tmp/
 .snapshot-*/
+
+# PDF→EPUB 转换环境（本机安装，不入库）
+.venv/

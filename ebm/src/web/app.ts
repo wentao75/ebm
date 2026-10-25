@@ -1155,6 +1155,60 @@ function detailToggleHtml(rel: string): string {
     .join("");
 }
 
+// ---------- PDF → EPUB 转换（文本版）----------
+function renderConvertResult(d: { id?: string; chapters?: number; chars?: number; sizeBytes?: number; kind?: string; missingPages?: number }): void {
+  const box = document.getElementById("dConvertBox");
+  if (!box || !d.id) return;
+  const wan = ((d.chars || 0) / 10000).toFixed(1);
+  const mb = ((d.sizeBytes || 0) / 1024 / 1024).toFixed(2);
+  const note = d.kind === "hybrid" && d.missingPages ? `（${d.missingPages} 页无文字层未包含）` : "";
+  box.classList.remove("hidden");
+  box.innerHTML = `<span class="dconvert-info">✅ 已转换：${d.chapters || 0} 章 · ${wan} 万字 · ${mb}MB ${note}</span>
+    <a class="btn tiny" href="/api/converted/${d.id}" download>⬇ 下载 EPUB</a>
+    <button class="btn tiny primary" id="dConvertPush" data-id="${d.id}">📤 发送 EPUB</button>`;
+  document.getElementById("dConvertPush")?.addEventListener("click", () => void pushConverted(d.id as string));
+}
+
+async function pushConverted(id: string): Promise<void> {
+  const btn = document.getElementById("dConvertPush") as HTMLButtonElement | null;
+  if (btn) { btn.disabled = true; btn.textContent = "📤 发送中…"; }
+  try {
+    const res = await fetch("/api/push/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ converted: id }) });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; bytes?: number; ms?: number; message?: string; error?: string };
+    if (res.ok && d.ok) toast(`已发送 EPUB 到阅读器（${((d.bytes || 0) / 1024 / 1024).toFixed(2)}MB · ${((d.ms || 0) / 1000).toFixed(1)}s）`);
+    else toast(`发送失败：${d.error || "HTTP " + res.status}`);
+  } catch (err) {
+    toast(`发送异常：${String(err)}`);
+  } finally {
+    const b = document.getElementById("dConvertPush") as HTMLButtonElement | null;
+    if (b) { b.disabled = false; b.textContent = "📤 发送 EPUB"; }
+  }
+}
+
+async function convertBook(): Promise<void> {
+  const rel = detailRel;
+  if (!rel) return;
+  const btn = document.getElementById("dConvert") as HTMLButtonElement | null;
+  if (btn) { btn.disabled = true; btn.textContent = "📄 转换中…"; }
+  try {
+    const res = await fetch("/api/convert", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rel }) });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; kind?: string; needsOcr?: boolean; pages?: number; textPages?: number; chapters?: number; chars?: number; sizeBytes?: number; id?: string; error?: string };
+    if (res.ok && d.ok) {
+      renderConvertResult(d);
+      toast(`转换完成：${d.chapters || 0} 章 · ${((d.chars || 0) / 10000).toFixed(1)} 万字`);
+    } else if (d.needsOcr) {
+      toast(`该书是扫描版（有文字页 ${d.textPages || 0}/${d.pages || 0}），需要 OCR，暂未启用`);
+    } else {
+      toast(`转换失败：${d.error || "HTTP " + res.status}`);
+    }
+  } catch (err) {
+    toast(`转换异常：${String(err)}`);
+  } finally {
+    const b = document.getElementById("dConvert") as HTMLButtonElement | null;
+    if (b) { b.disabled = false; b.textContent = "📄 转 EPUB"; }
+  }
+}
+
 // ---------- 推送到局域网阅读器（讯飞起点阅读器）----------
 let pushStatusCache: { at: number; reachable: boolean; target: string; fileSizeLimit?: number; error?: string } | null = null;
 
@@ -1235,6 +1289,7 @@ function refreshDetailActions(): void {
     ${canRead ? `<a class="btn read" href="${readUrl(b)}">${rec?.page ? "▶ 继续阅读" : "📖 阅读"}</a>` : `<a class="btn read" disabled>预览不可用</a>`}
     <a class="btn primary dl-link" href="${fileUrl(b.rel, "attachment")}" download="${txt(b.title)}.${b.ext.toLowerCase()}">⬇ 下载</a>
     <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 阅读器检测中…</button>
+    <button class="btn convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 转 EPUB</button>
     ${detailToggleHtml(rel)}
     <button class="btn editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>`;
   void refreshPushHint(rel);
@@ -1244,6 +1299,7 @@ async function openDetail(rel: string): Promise<void> {
   const b = allBooks.find((x) => x.rel === rel);
   if (!b) return;
   detailRel = rel;
+  document.getElementById("dConvertBox")?.classList.add("hidden");
   const rec = shelfData[rel];
   const initial = esc((b.title || "?").trim().charAt(0).toUpperCase());
   const hue = [...rel].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 360, 7);
@@ -2047,6 +2103,7 @@ async function boot(): Promise<void> {
     const t = ev.target as HTMLElement;
     if (t.classList.contains("editbtn")) void openEditFromDetail();
     if (t.id === "dPush") void sendToDevice();
+    if (t.id === "dConvert") void convertBook();
   });
   $("#edClose").addEventListener("click", closeEdit);
   $("#editMask").addEventListener("click", (ev) => {

@@ -18,6 +18,44 @@ function makeBytes(rel, size) {
 }
 
 /** 生成一个真正可被 pdf.js 解析的多页 PDF（阅读器测试需要） */
+/** 生成"有真实文字层"的 PDF（每页约 200 字符）：用于 PDF→EPUB 转换的测试与 UI 端到端 */
+async function makeTextPdf(file, pages = 4) {
+  const objs = [];
+  const add = (b) => {
+    objs.push(b);
+    return objs.length;
+  };
+  const catalog = add("");
+  const pagesId = add("");
+  const fontId = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const pageIds = [];
+  const para =
+    "The quick brown fox jumps over the lazy dog. This paragraph exists so that the PDF has a real text layer with enough characters per page to be classified as a text document rather than a scanned one. ";
+  for (let i = 1; i <= pages; i++) {
+    let y = 740;
+    const ops = [`Page ${i}`, para, para]
+      .map((t) => `BT /F1 14 Tf 60 ${(y -= 22)} Td (${t.replace(/[()\\]/g, "")}) Tj ET`)
+      .join("\n");
+    const contentId = add(`<< /Length ${Buffer.byteLength(ops)} >>\nstream\n${ops}\nendstream`);
+    pageIds.push(add(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 792] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>`));
+  }
+  objs[catalog - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
+  objs[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(" ")}] /Count ${pages} >>`;
+  let out = "%PDF-1.4\n";
+  const offsets = [];
+  for (let i = 0; i < objs.length; i++) {
+    offsets.push(Buffer.byteLength(out, "utf-8"));
+    out += `${i + 1} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xref = Buffer.byteLength(out, "utf-8");
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const off of offsets) out += `${String(off).padStart(10, "0")} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root ${catalog} 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  await fsp.writeFile(file, out);
+  return file;
+}
+
 function makePdf(pageCount = 12) {
   const objs = [];
   const add = (body) => {
@@ -303,4 +341,5 @@ async function cleanup(dir) {
   }
 }
 
-module.exports = { EBM_DIR, DEFAULT_FILES, META_FIXTURE, BOOK_META_FIXTURE, META_CACHE_FIXTURE, TIERS_FIXTURE, tmpDir, makeLibrary, makeBytes, makePdf, freePort, startServer, cleanup, stop };
+module.exports = {
+  makeTextPdf, EBM_DIR, DEFAULT_FILES, META_FIXTURE, BOOK_META_FIXTURE, META_CACHE_FIXTURE, TIERS_FIXTURE, tmpDir, makeLibrary, makeBytes, makePdf, freePort, startServer, cleanup, stop };

@@ -17,7 +17,7 @@ import {
   opdsRoot,
   opensearchXml,
 } from "./opds";
-import { currentJob, isBusy } from "./jobs";
+import { currentJob, isBusy, release, tryAcquire } from "./jobs";
 import { doubanCandidates, doubanSubject, ensureYabookDetail, externalMetaRunning, gaps as metadataGaps, isTaskName, MAX_ENRICH_LIMIT, runMetadata, status as metadataStatus, yabookCandidates } from "./metadata";
 import { overrides, sanitizeOverride } from "./overrides";
 import { isRunning, MAX_IDS_PER_RUN, runPipeline } from "./pipeline";
@@ -27,6 +27,7 @@ import { restoreRejected, restoreStatus } from "./recoRestore";
 import { pathAliases, performRename, planRename, RenameLog, suggestFileName, undoRename } from "./rename";
 import { BookFile, LIBRARY_ROOT, LibraryScanner } from "./scanner";
 import { probeDevice, pushFile, pushTarget } from "./push";
+import { convertToEpub, convertedAbs, findConverted } from "./convert";
 import { isShelfName, normPage, ShelfStore, validRel } from "./shelves";
 
 const PORT = parseInt(process.env.EBM_PORT || "6722", 10);
@@ -594,12 +595,71 @@ app.get("/api/reco/archive", async (c) => {
 
 // ---------- 一键下载：流式日志 ----------
 // 推送到局域网阅读器（讯飞起点阅读器：设备本地 /config + /upload，字段 sfile）
-app.get("/api/push/status", async (c) => json(c, await probeDevice()));
-
-app.post("/api/push/send", async (c) => {
+// PDF → EPUB（文本版；扫描版返回 needsOcr）。重型任务：共用任务锁避免并发
+app.post("/api/convert", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { rel?: unknown } | null;
   const rel = typeof body?.rel === "string" ? body.rel : "";
   if (!rel) return json(c, { ok: false, error: "缺少 rel" }, 400);
+  // 先做路径校验（路径穿越应是 403），再判断扩展名
+  const abs = safeResolve(rel);
+  if (!abs) return json(c, { ok: false, error: "非法路径" }, 403);
+  if (!rel.toLowerCase().endsWith(".pdf")) return json(c, { ok: false, error: "目前只支持 PDF 转 EPUB" }, 400);
+  let st = await fsp.stat(abs).catch(() => null);
+  if (!st || !st.isFile()) return json(c, { ok: false, error: "文件不存在（可能 iCloud 未下载）" }, 404);
+  if (!tryAcquire("convert")) {
+    return json(c, { ok: false, busy: true, error: `已有重型任务在执行（${currentJob()}），请稍后再试` }, 409);
+  }
+  try {
+    if (isDataless(st)) {
+      requestMaterialize(abs);
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        if (await quickReady(abs)) break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      st = await fsp.stat(abs).catch(() => null);
+      if (!st || isDataless(st)) {
+        return json(c, { ok: false, pendingMaterialize: true, error: "该书在 iCloud 尚未取回完成，请稍后重试" }, 202);
+      }
+    }
+    const book = index.find(rel);
+    const r = await convertToEpub(abs, book?.title || path.basename(rel, path.extname(rel)), book?.author || "", rel);
+    return json(c, r, r.ok ? 200 : r.needsOcr ? 200 : 500);
+  } finally {
+    release();
+  }
+});
+
+// 下载转换产物（文件名用书名，UTF-8 filename* 兼容中文）
+app.get("/api/converted/:id", async (c) => {
+  const rec = await findConverted(c.req.param("id"));
+  if (!rec) return c.text("转换结果不存在", 404);
+  const data = await fsp.readFile(convertedAbs(rec)).catch(() => null);
+  if (!data) return c.text("转换文件已丢失（可重新转换）", 404);
+  const fname = `${rec.title || "book"}.epub`.replace(/[\/:*?"<>|]/g, "_");
+  return new Response(new Uint8Array(data), {
+    headers: {
+      "content-type": "application/epub+zip",
+      "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`,
+      "content-length": String(data.length),
+    },
+  });
+});
+
+app.get("/api/push/status", async (c) => json(c, await probeDevice()));
+
+app.post("/api/push/send", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { rel?: unknown; converted?: unknown } | null;
+  // 支持两种来源：书库原文件 {rel} 或已转换的 EPUB {converted: id}
+  const convertedId = typeof body?.converted === "string" ? body.converted : "";
+  if (convertedId) {
+    const rec = await findConverted(convertedId);
+    if (!rec) return json(c, { ok: false, error: "找不到该转换结果（可能已被清理）" }, 404);
+    const r = await pushFile(convertedAbs(rec), `${rec.title}.epub`);
+    return json(c, r, r.ok ? 200 : 502);
+  }
+  const rel = typeof body?.rel === "string" ? body.rel : "";
+  if (!rel) return json(c, { ok: false, error: "缺少 rel 或 converted" }, 400);
   const abs = safeResolve(rel);
   if (!abs) return json(c, { ok: false, error: "非法路径" }, 403);
   let st = await fsp.stat(abs).catch(() => null);

@@ -260,13 +260,24 @@
 ### 一键下载（既有接口，配合使用）
 `POST /api/pipeline/download { "ids": [...] }` —— 界面上的「确认并立即下载」= decide(approve) 成功后立刻调用它（**单次上限 30 本**，由 `maxDownload` 告知前端）。
 
+### `POST /api/convert`
+把文本版 PDF 转成可重排的 EPUB。
+- 请求 `{ "rel": "经济&投资/《某书》某人.pdf" }`（**仅 PDF**）
+- 响应成功 `{ ok:true, kind:"text"|"hybrid", id, pages, textPages, missingPages, chapters, chars, sizeBytes }`
+- 扫描版（有文字页 <40%）→ `{ ok:false, kind:"scanned", needsOcr:true, textPages, pages }`
+- 重型任务：走共享任务锁（忙时 **409**）；iCloud 云端书先取回，最多等 60s（未完成 **202** + `pendingMaterialize`）
+- 产物：`eval/data/converted/<id>.epub`（不入书库、不参与扫描）
+
+### `GET /api/converted/:id`
+下载转换产物（`application/epub+zip`，`Content-Disposition` 用 UTF-8 文件名）。不存在 → 404。
+
 ### `GET /api/push/status`
 探测局域网阅读器是否在线（讯飞起点阅读器：设备只在「传书」页面打开时监听）。
 - 响应 `{ target, reachable, fileSizeLimit?, ms, error? }`；`fileSizeLimit` 为 pdf/mobi/azw3 单文件上限（MB）
 
 ### `POST /api/push/send`
 把书库里的书推送到阅读器。
-- 请求 `{ "rel": "心理学/《某书》某人.pdf" }`
+- 请求 `{ "rel": "心理学/《某书》某人.pdf" }` 或 `{ "converted": "<转换 id>" }`（推送转换后的 EPUB）
 - 响应 `{ ok, target, bytes, ms, message?, error? }`；`message` 通常是设备返回的"上传成功"
 - 实现：multipart 字段 **`sfile`** 推送到 `POST <target>/upload`；iCloud 云端书先取回（最多等 60s，未完成返回 **202** + `pendingMaterialize: true`）
 - 错误：设备离线/地址不对 → **502**（提示"请先在阅读器上打开「传书」页面"）· 超过设备上限 → 502 并说明 · 文件不存在 → 404 · 路径非法 → 403

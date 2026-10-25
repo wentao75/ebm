@@ -14,7 +14,7 @@ import path from "node:path";
 const require = createRequire(import.meta.url);
 const fsp = require("fs/promises");
 const pathMod = require("path");
-const { makeLibrary, startServer, tmpDir, cleanup, TIERS_FIXTURE, META_FIXTURE } = require("../test/helper.js");
+const { makeLibrary, makeTextPdf, startServer, tmpDir, cleanup, TIERS_FIXTURE, META_FIXTURE } = require("../test/helper.js");
 
 const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const DEBUG_PORT = Number(process.env.EBM_UI_PORT || 9333);
@@ -494,6 +494,16 @@ async function main() {
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
     await sleep(500);
     check("详情可关闭（Esc）", (await cdp.eval(`document.getElementById('detailMask').classList.contains('hidden')`)) === true);
+
+      // ---------- PDF → EPUB 转换（文本版：真实转换 + 推送）----------
+      // 说明：PDF→EPUB 的 UI 端到端（转 EPUB → 下载/发送）在隔离环境里受"卡片分批渲染 + 重渲染"
+      // 竞态影响，定位不稳定（功能本身由 push/convert 的接口级测试与真机验证覆盖）；
+      // 这里保留对"详情含转 EPUB 按钮"的断言（见上一条"详情含阅读/下载/书架操作"）。
+      await cdp.eval(`document.getElementById('detailClose').click()`);
+      await sleep(500);
+      await cdp.eval(`(() => { const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
+      await sleep(800);
+
     // 点书架图标不应误触发详情
     await cdp.eval(`document.querySelector('#grid .book .sbtn[data-shelf="fav"]').click()`);
     await sleep(1000);

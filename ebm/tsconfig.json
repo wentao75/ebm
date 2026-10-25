@@ -25,6 +25,7 @@
     "src/recoArchive.ts",
     "src/recoRestore.ts",
     "src/paths.ts",
-    "src/push.ts"
+    "src/push.ts",
+    "src/convert.ts"
   ]
 }
