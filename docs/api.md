@@ -263,8 +263,9 @@
 ### `POST /api/convert`
 把文本版 PDF 转成可重排的 EPUB。
 - 请求 `{ "rel": "经济&投资/《某书》某人.pdf" }`（**仅 PDF**）
-- 响应成功 `{ ok:true, kind:"text"|"hybrid", id, pages, textPages, missingPages, chapters, chars, sizeBytes }`
-- 扫描版（有文字页 <40%）→ `{ ok:false, kind:"scanned", needsOcr:true, textPages, pages }`
+- 响应成功 `{ ok:true, kind:"text"|"hybrid"|"scanned-images", id, pages, textPages, imagePages, note?, chapters, chars, sizeBytes }`
+- **无文字层的页不会丢弃**：会渲染成图片页（`OEBPS/img/pageNNNN.jpg`）按页序保留；`imagePages` 是这类页数
+- `scanned-images`＝几乎无文字层的书，仍产出完整 EPUB（图片版，不可重排）
 - 重型任务：走共享任务锁（忙时 **409**）；iCloud 云端书先取回，最多等 60s（未完成 **202** + `pendingMaterialize`）
 - 产物：`eval/data/converted/<id>.epub`（不入书库、不参与扫描）
 

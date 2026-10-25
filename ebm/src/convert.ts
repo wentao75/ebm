@@ -1,6 +1,7 @@
 // convert.ts —— 文本版 PDF → EPUB（调用本地 PyMuPDF 转换器）
 //
 // 转换器：scripts/pdf2epub.py（PyMuPDF 提取带字号文本 → 分章 → 生成 EPUB3）
+// 重要：无文字层的页（插图/扫描页）会渲染成图片页内嵌，**整本书按页序完整保留**，不丢内容
 // 环境：ebm/.venv（python3 -m venv .venv && .venv/bin/pip install pymupdf）
 // 产物：data/converted/<id>.epub + data/converted/index.json（不入书库、不参与扫描）
 import { execFile } from "child_process";
@@ -21,10 +22,11 @@ export interface ConvertedRecord {
   srcRel: string;
   title: string;
   file: string;
-  kind: "text" | "hybrid";
+  kind: "text" | "hybrid" | "scanned-images";
   pages: number;
   textPages: number;
-  missingPages: number;
+  /** 无文字层、已渲染为图片页保留的页数 */
+  imagePages: number;
   chapters: number;
   chars: number;
   sizeBytes: number;
@@ -33,13 +35,12 @@ export interface ConvertedRecord {
 
 export interface ConvertResult {
   ok: boolean;
-  kind?: "text" | "hybrid" | "scanned" | "error";
-  /** 扫描版：需要 OCR（当前未启用） */
-  needsOcr?: boolean;
+  kind?: "text" | "hybrid" | "scanned-images" | "error";
   id?: string;
   pages?: number;
   textPages?: number;
-  missingPages?: number;
+  imagePages?: number;
+  note?: string;
   chapters?: number;
   chars?: number;
   sizeBytes?: number;
@@ -125,17 +126,7 @@ export async function convertToEpub(abs: string, title: string, author: string, 
   if (!d) return { ok: false, kind: "error", error: `转换器无有效输出：${String(stdout).slice(0, 160)}` };
   const kind = String(d.kind || "");
   if (kind === "error") return { ok: false, kind: "error", error: String(d.error || "转换失败").slice(0, 300) };
-  if (kind === "scanned") {
-    return {
-      ok: false,
-      kind: "scanned",
-      needsOcr: true,
-      pages: Number(d.pages) || 0,
-      textPages: Number(d.textPages) || 0,
-      chars: Number(d.chars) || 0,
-    };
-  }
-  if (kind !== "text" && kind !== "hybrid") {
+  if (kind !== "text" && kind !== "hybrid" && kind !== "scanned-images") {
     return { ok: false, kind: "error", error: `未知的转换结果：${kind}` };
   }
   const sizeBytes = Number(d.bytes) || (await fsp.stat(out)).size;
@@ -144,10 +135,10 @@ export async function convertToEpub(abs: string, title: string, author: string, 
     srcRel,
     title,
     file: `${id}.epub`,
-    kind,
+    kind: kind as ConvertedRecord["kind"],
     pages: Number(d.pages) || 0,
     textPages: Number(d.textPages) || 0,
-    missingPages: Number(d.missingPages) || 0,
+    imagePages: Number(d.imagePages) || 0,
     chapters: Number(d.chapters) || 0,
     chars: Number(d.chars) || 0,
     sizeBytes,
@@ -164,7 +155,13 @@ export async function convertToEpub(abs: string, title: string, author: string, 
     id,
     pages: rec.pages,
     textPages: rec.textPages,
-    missingPages: rec.missingPages,
+    imagePages: rec.imagePages,
+    note:
+      rec.kind === "scanned-images"
+        ? `全书以图片页保留（${rec.imagePages} 页），内容完整但不可重排`
+        : rec.imagePages > 0
+          ? `${rec.imagePages} 页无文字层已渲染为图片页保留`
+          : undefined,
     chapters: rec.chapters,
     chars: rec.chars,
     sizeBytes,

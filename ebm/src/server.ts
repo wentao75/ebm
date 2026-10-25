@@ -624,7 +624,7 @@ app.post("/api/convert", async (c) => {
     }
     const book = index.find(rel);
     const r = await convertToEpub(abs, book?.title || path.basename(rel, path.extname(rel)), book?.author || "", rel);
-    return json(c, r, r.ok ? 200 : r.needsOcr ? 200 : 500);
+    return json(c, r, r.ok ? 200 : 500);
   } finally {
     release();
   }

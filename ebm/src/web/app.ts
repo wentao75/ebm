@@ -1156,12 +1156,12 @@ function detailToggleHtml(rel: string): string {
 }
 
 // ---------- PDF → EPUB 转换（文本版）----------
-function renderConvertResult(d: { id?: string; chapters?: number; chars?: number; sizeBytes?: number; kind?: string; missingPages?: number }): void {
+function renderConvertResult(d: { id?: string; chapters?: number; chars?: number; sizeBytes?: number; kind?: string; imagePages?: number; note?: string }): void {
   const box = document.getElementById("dConvertBox");
   if (!box || !d.id) return;
   const wan = ((d.chars || 0) / 10000).toFixed(1);
   const mb = ((d.sizeBytes || 0) / 1024 / 1024).toFixed(2);
-  const note = d.kind === "hybrid" && d.missingPages ? `（${d.missingPages} 页无文字层未包含）` : "";
+  const note = d.note ? `（${d.note}）` : "";
   box.classList.remove("hidden");
   box.innerHTML = `<span class="dconvert-info">✅ 已转换：${d.chapters || 0} 章 · ${wan} 万字 · ${mb}MB ${note}</span>
     <a class="btn tiny" href="/api/converted/${d.id}" download>⬇ 下载 EPUB</a>
