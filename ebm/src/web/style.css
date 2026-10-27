@@ -447,3 +447,6 @@ body {
 /* PDF→EPUB 转换结果区（v1.10.1） */
 .dconvert { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 8px; }
 .dconvert-info { font-size: 12px; color: var(--muted); }
+
+/* 阅读器地址输入（v1.10.3） */
+.pushurl { width: 100%; box-sizing: border-box; margin: 10px 0 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; }

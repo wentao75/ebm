@@ -477,6 +477,20 @@ async function main() {
     }, { timeout: 20000 });
     check("点击后真实推送到设备（成功提示）", String(pushToast).includes("已发送到阅读器"), String(pushToast).slice(0, 60));
     check("设备收到推送（字段 sfile）", fakeDevice.received.length >= 1 && fakeDevice.received[0].field === "sfile", `收到 ${fakeDevice.received.length} 次`);
+
+    // 阅读器地址可在网页里设置（设备每次打开的网址可能不同）
+    await cdp.eval(`document.getElementById('btnPushCfg').click()`);
+    await waitFor(async () => (await cdp.eval(`!document.getElementById('pushMask').classList.contains('hidden')`)) === true, { timeout: 5000 });
+    check("地址输入框预填当前地址", (await cdp.eval(`document.getElementById("pushUrl").value.length`)) >= 8);
+    await cdp.eval(`(() => { const i = document.getElementById("pushUrl"); i.value = ${JSON.stringify(fakeDevice.url)}; })()`);
+    await cdp.eval(`document.getElementById('pushSave').click()`);
+    const pushHint = await waitFor(async () => {
+      const t = await cdp.eval(`document.getElementById('pushResult').textContent`);
+      return String(t).includes("已保存") ? t : "";
+    }, { timeout: 10000 });
+    check("保存地址后立即显示连接结果", String(pushHint).includes("已保存"), String(pushHint).slice(0, 60));
+    await cdp.eval(`document.getElementById('pushCancel').click()`);
+    check("地址对话框可关闭", (await cdp.eval(`document.getElementById("pushMask").classList.contains("hidden")`)) === true);
     // 详情内切换书架
     await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').click()`);
     await sleep(1200);

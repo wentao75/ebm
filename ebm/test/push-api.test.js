@@ -111,3 +111,26 @@ test("GET /api/push/status：设备离线时 reachable=false（不抛错）", as
     await cleanup(dataDir2);
   }
 });
+
+test("POST /api/push/target：保存地址并立即探测（网页里粘贴设备网址的接口）", async () => {
+  const r = await postJson(srv.base, "/api/push/target", { url: dev.url });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.saved, true);
+  assert.equal(r.body.reachable, true);
+  assert.equal(r.body.fileSizeLimit, 200);
+  // 保存后 /status 的目标应随之变化
+  const st = await (await fetch(`${srv.base}/api/push/status`)).json();
+  assert.equal(st.target, dev.url);
+});
+
+test("POST /api/push/target：非法地址返回 400 且不覆盖已保存地址", async () => {
+  const before = (await (await fetch(`${srv.base}/api/push/status`)).json()).target;
+  for (const bad of ["", "ftp://x", "http://"]) {
+    const r = await postJson(srv.base, "/api/push/target", { url: bad });
+    assert.equal(r.status, 400, `地址 ${JSON.stringify(bad)} 应被拒绝`);
+    assert.equal(r.body.ok, false);
+  }
+  const after = (await (await fetch(`${srv.base}/api/push/status`)).json()).target;
+  assert.equal(after, before, "非法地址不应改动已保存的地址");
+});

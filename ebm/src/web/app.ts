@@ -1155,6 +1155,56 @@ function detailToggleHtml(rel: string): string {
     .join("");
 }
 
+// ---------- 阅读器地址设置（设备地址每次可能不同，需要在网页里改）----------
+async function openPushCfg(): Promise<void> {
+  const st = await loadPushStatus(true);
+  ($("#pushUrl") as HTMLInputElement).value = st.target || "";
+  ($("#pushResult") as HTMLElement).textContent = "";
+  $("#pushMask").classList.remove("hidden");
+  ($("#pushUrl") as HTMLInputElement).focus();
+}
+
+function closePushCfg(): void {
+  $("#pushMask").classList.add("hidden");
+}
+
+async function savePushCfg(): Promise<void> {
+  const input = $("#pushUrl") as HTMLInputElement;
+  const btn = $("#pushSave") as HTMLButtonElement;
+  const out = $("#pushResult") as HTMLElement;
+  const url = input.value.trim();
+  if (!url) {
+    out.textContent = "请先粘贴阅读器上显示的网址";
+    return;
+  }
+  btn.disabled = true;
+  out.textContent = "保存中…";
+  try {
+    const res = await fetch("/api/push/target", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; saved?: boolean; target?: string; reachable?: boolean; fileSizeLimit?: number; error?: string };
+    if (!res.ok || !d.ok) {
+      out.textContent = `保存失败：${d.error || "HTTP " + res.status}`;
+      return;
+    }
+    pushStatusCache = null; // 让详情页按钮重新探测
+    if (d.reachable) {
+      input.value = d.target || url;
+      out.textContent = `✅ 已保存并连接成功：${d.target}${d.fileSizeLimit ? ` · 单文件上限 ${d.fileSizeLimit}MB` : ""}`;
+    } else {
+      out.textContent = `已保存 ${d.target}，但当前连不上：${d.error || "请确认阅读器上已打开「传书」页面"}（可稍后点按钮重试）`;
+    }
+    if (detailRel) void refreshPushHint(detailRel);
+  } catch (err) {
+    out.textContent = `保存异常：${String(err)}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- PDF → EPUB 转换（文本版）----------
 function renderConvertResult(d: { id?: string; chapters?: number; chars?: number; sizeBytes?: number; kind?: string; imagePages?: number; note?: string }): void {
   const box = document.getElementById("dConvertBox");
@@ -2098,6 +2148,15 @@ async function boot(): Promise<void> {
   $("#metaEnrich").addEventListener("click", () => void runMetaTasks(["enrich"]));
   $("#metaCatalog").addEventListener("click", () => void runMetaTasks(["catalog"]));
   $("#metaAll").addEventListener("click", () => void runMetaTasks(["build", "enrich", "catalog"]));
+  $("#btnPushCfg").addEventListener("click", () => void openPushCfg());
+  $("#pushCancel").addEventListener("click", closePushCfg);
+  $("#pushSave").addEventListener("click", () => void savePushCfg());
+  $("#pushMask").addEventListener("click", (ev) => {
+    if (ev.target === $("#pushMask")) closePushCfg();
+  });
+  ($("#pushUrl") as HTMLInputElement).addEventListener("keydown", (ev) => {
+    if ((ev as KeyboardEvent).key === "Enter") void savePushCfg();
+  });
   $("#detailClose").addEventListener("click", closeDetail);
   $("#dActions").addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement;

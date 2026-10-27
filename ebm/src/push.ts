@@ -10,6 +10,7 @@
 //   - 用 Node 核心 http 直连（不经任何环境代理；LAN 地址不该走代理）
 //   - 文件用流式发送（200MB 的书不会整本读进内存）
 //   - multipart 分片头用 UTF-8 字节写出（设备按 UTF-8 解析中文文件名，与 curl 行为一致）
+//   - 地址可在网页「📤 阅读器」里粘贴保存（设备每次打开的地址可能不同），写入 data/push-target.json
 import crypto from "crypto";
 import fs from "fs";
 import fsp from "fs/promises";
@@ -33,6 +34,34 @@ export async function pushTarget(): Promise<string> {
     /* 未配置：用默认地址 */
   }
   return DEFAULT_TARGET;
+}
+
+/** 规范化用户输入的设备地址（允许省略 http://、去掉尾部斜杠） */
+export function normalizeTarget(raw: string): string {
+  const s = String(raw || "").trim();
+  if (!s) throw new Error("地址不能为空");
+  const withProto = /^[a-z][a-z0-9+.-]*:\/\//i.test(s) ? s : `http://${s}`;
+  let u: URL;
+  try {
+    u = new URL(withProto);
+  } catch {
+    throw new Error("地址格式不对，例如 http://192.168.3.74:50071");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("只支持 http / https 地址");
+  if (!u.hostname) throw new Error("地址缺少主机名");
+  const path = u.pathname.replace(/\/+$/, "");
+  return `${u.protocol}//${u.host}${path === "/" ? "" : path}`;
+}
+
+/** 保存推送目标到 data/push-target.json（原子写） */
+export async function setPushTarget(raw: string): Promise<string> {
+  const url = normalizeTarget(raw);
+  const file = path.join(DATA_DIR, "push-target.json");
+  const tmp = `${file}.tmp`;
+  await fsp.mkdir(DATA_DIR, { recursive: true });
+  await fsp.writeFile(tmp, JSON.stringify({ url }, null, 2), "utf-8");
+  await fsp.rename(tmp, file);
+  return url;
 }
 
 export interface DeviceStatus {

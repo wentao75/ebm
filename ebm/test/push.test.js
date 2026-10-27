@@ -13,7 +13,7 @@ const path = require("path");
 const TMP = path.join(os.tmpdir(), `ebm-push-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 process.env.EBM_DATA_DIR = TMP; // 必须在 require 之前（paths.ts 在模块加载时解析数据目录）
 
-const { probeDevice, pushFile, pushTarget, DEFAULT_TARGET } = require("../dist/push.js");
+const { probeDevice, pushFile, pushTarget, normalizeTarget, setPushTarget, DEFAULT_TARGET } = require("../dist/push.js");
 
 /** 启动假设备；limit 为 /config 返回的 MB 上限，status 控制 /upload 响应码 */
 async function fakeDevice({ limit = 200, status = 200, respond = '{"msg":"上传成功"}' } = {}) {
@@ -148,4 +148,22 @@ test("pushFile：文件不存在 / 空文件直接拒绝", async () => {
   assert.equal(r.ok, false);
   assert.match(String(r.error), /文件为空/);
   delete process.env.EBM_PUSH_TARGET;
+});
+
+test("normalizeTarget：允许省略协议、去掉尾部斜杠、拒绝非法地址", () => {
+  assert.equal(normalizeTarget("192.168.3.74:50071"), "http://192.168.3.74:50071");
+  assert.equal(normalizeTarget("  http://192.168.3.74:50071/  "), "http://192.168.3.74:50071");
+  assert.equal(normalizeTarget("https://reader.local:8080/upload"), "https://reader.local:8080/upload");
+  assert.throws(() => normalizeTarget(""), /不能为空/);
+  assert.throws(() => normalizeTarget("ftp://x"), /只支持 http/);
+  assert.throws(() => normalizeTarget("http://"), /格式|主机名/);
+});
+
+test("setPushTarget：保存后 pushTarget() 立即生效（网页里改地址的底层能力）", async () => {
+  delete process.env.EBM_PUSH_TARGET;
+  const url = await setPushTarget("192.168.3.99:12345");
+  assert.equal(url, "http://192.168.3.99:12345");
+  assert.equal(await pushTarget(), "http://192.168.3.99:12345");
+  const raw = JSON.parse(await fsp.readFile(path.join(TMP, "push-target.json"), "utf-8"));
+  assert.equal(raw.url, "http://192.168.3.99:12345");
 });

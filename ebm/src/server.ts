@@ -26,7 +26,7 @@ import { queryArchive } from "./recoArchive";
 import { restoreRejected, restoreStatus } from "./recoRestore";
 import { pathAliases, performRename, planRename, RenameLog, suggestFileName, undoRename } from "./rename";
 import { BookFile, LIBRARY_ROOT, LibraryScanner } from "./scanner";
-import { probeDevice, pushFile, pushTarget } from "./push";
+import { probeDevice, pushFile, pushTarget, setPushTarget } from "./push";
 import { convertToEpub, convertedAbs, findConverted } from "./convert";
 import { isShelfName, normPage, ShelfStore, validRel } from "./shelves";
 
@@ -594,6 +594,19 @@ app.get("/api/reco/archive", async (c) => {
 });
 
 // ---------- 一键下载：流式日志 ----------
+// 设置阅读器地址（设备每次打开的网址可能不同：在设备「传书」页面复制后粘进来）
+app.post("/api/push/target", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
+  const raw = typeof body?.url === "string" ? body.url : "";
+  try {
+    await setPushTarget(raw);
+  } catch (err) {
+    return json(c, { ok: false, error: (err as Error)?.message || "地址无效" }, 400);
+  }
+  const st = await probeDevice();
+  return json(c, { ok: true, saved: true, ...st });
+});
+
 // 推送到局域网阅读器（讯飞起点阅读器：设备本地 /config + /upload，字段 sfile）
 // PDF → EPUB（文本版；扫描版返回 needsOcr）。重型任务：共用任务锁避免并发
 app.post("/api/convert", async (c) => {

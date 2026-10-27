@@ -13,6 +13,7 @@
     <input id="search" type="search" placeholder="搜索书名 / 作者 / 标签 / 豆瓣分…（Ctrl+K）" autocomplete="off" />
     <span id="stats" class="stats"></span>
     <button id="btnMeta" class="btn" title="书目元数据补全（简介覆盖率 / 一键补简介）">🗂 元数据</button>
+    <button id="btnPushCfg" class="btn" title="设置阅读器地址：在阅读器上打开「传书」页面，把显示的网址粘进来">📤 阅读器</button>
   </header>
 
   <div class="layout">
@@ -174,6 +175,19 @@
   </div>
 
   <!-- 通用二次确认（标题/说明/按钮文案由动作决定，避免"确认不要了"却写着"开始下载"） -->
+  <div id="pushMask" class="mask hidden">
+    <div class="dialog">
+      <h3>阅读器地址</h3>
+      <p class="muted">在阅读器上打开「<b>传书</b>」页面（设备只在该页面打开时才可被推送），把它显示的网址粘到下面。地址每次可能不同，随时可再来修改。</p>
+      <input id="pushUrl" class="pushurl" placeholder="http://192.168.3.74:50071" spellcheck="false" autocomplete="off" />
+      <div class="dialog-actions">
+        <button class="btn" id="pushCancel">取消</button>
+        <button class="btn primary" id="pushSave">保存并测试</button>
+      </div>
+      <p class="muted" id="pushResult"></p>
+    </div>
+  </div>
+
   <div id="confirmMask" class="mask hidden">
     <div class="dialog">
       <h3 id="confirmTitle">请确认</h3>
@@ -199,6 +213,6 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./app.js?v=8"></script>
+  <script src="./app.js?v=9"></script>
 </body>
 </html>

@@ -272,6 +272,12 @@
 ### `GET /api/converted/:id`
 下载转换产物（`application/epub+zip`，`Content-Disposition` 用 UTF-8 文件名）。不存在 → 404。
 
+### `POST /api/push/target`
+保存阅读器地址（设备每次打开的传书网址可能不同，供网页「📤 阅读器」对话框使用）。
+- 请求 `{ "url": "192.168.3.74:50071" }`（可省略 `http://`）
+- 响应 `{ ok:true, saved:true, target:"http://192.168.3.74:50071", reachable:true|false, fileSizeLimit?, error? }`（保存后立即探测）
+- 非法地址（空/非 http(s)）→ **400**，且不改动已保存地址
+
 ### `GET /api/push/status`
 探测局域网阅读器是否在线（讯飞起点阅读器：设备只在「传书」页面打开时监听）。
 - 响应 `{ target, reachable, fileSizeLimit?, ms, error? }`；`fileSizeLimit` 为 pdf/mobi/azw3 单文件上限（MB）
