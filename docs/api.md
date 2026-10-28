@@ -278,6 +278,20 @@
 - 响应 `{ ok:true, saved:true, target:"http://192.168.3.74:50071", reachable:true|false, fileSizeLimit?, error? }`（保存后立即探测）
 - 非法地址（空/非 http(s)）→ **400**，且不改动已保存地址
 
+### `GET /api/metadata/audit`
+元数据体检：列出"匹配到的豆瓣标题与文件标题差异很大"的可疑记录。
+- 响应 `{ ok:true, total, suspects:[{ rel, similarity, matchedTitle, fileTitle, author, doubanId, pinned }] }`
+
+### `POST /api/metadata/rematch`
+用修复后的匹配器重新查找单本书的豆瓣信息（不需要链接）。
+- 请求 `{ "rel": "…" }` → 响应 `{ ok, doubanId, title, publisher, year, douban, introLen, rel }`
+
+### `POST /api/metadata/link`
+按用户提供的豆瓣链接/ID 直接抓取并覆盖该书元数据（跳过模糊匹配），写回后标记 `pinned:true`（后续自动 enrich 不覆盖）。
+- 请求 `{ "rel": "运动&健康/《某书》某人.pdf", "url": "https://book.douban.com/subject/27107200/" }`（也接受裸数字 ID）
+- 响应 `{ ok, doubanId, title, author, publisher, year, douban, pinned, introLen, rel }`
+- 非豆瓣链接/缺参 → **400**；抓取失败 → **502**
+
 ### `GET /api/push/status`
 探测局域网阅读器是否在线（讯飞起点阅读器：设备只在「传书」页面打开时监听）。
 - 响应 `{ target, reachable, fileSizeLimit?, ms, error? }`；`fileSizeLimit` 为 pdf/mobi/azw3 单文件上限（MB）

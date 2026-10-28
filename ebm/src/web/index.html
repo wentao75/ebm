@@ -14,6 +14,7 @@
     <span id="stats" class="stats"></span>
     <button id="btnMeta" class="btn" title="书目元数据补全（简介覆盖率 / 一键补简介）">🗂 元数据</button>
     <button id="btnPushCfg" class="btn" title="设置阅读器地址：在阅读器上打开「传书」页面，把显示的网址粘进来">📤 阅读器</button>
+    <button id="btnAudit" class="btn" title="元数据体检：找出可能配错的书，逐本重新匹配或按链接替换">🧹 体检</button>
   </header>
 
   <div class="layout">
@@ -175,6 +176,31 @@
   </div>
 
   <!-- 通用二次确认（标题/说明/按钮文案由动作决定，避免"确认不要了"却写着"开始下载"） -->
+  <div id="auditMask" class="mask hidden">
+    <div class="dialog audit-dialog">
+      <h3>元数据体检</h3>
+      <p class="muted">列出"匹配到的豆瓣标题与文件标题差异很大"的书（可能配错）。可逐本「🔄 重查」（用修复后的匹配器重新查找）或「🔗 链接」（直接给豆瓣页面地址）。</p>
+      <div id="auditList" class="audit-list"></div>
+      <div class="dialog-actions">
+        <button class="btn" id="auditRefresh">重新体检</button>
+        <button class="btn primary" id="auditClose">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="metaLinkMask" class="mask hidden">
+    <div class="dialog">
+      <h3>按链接更新元数据</h3>
+      <p class="muted">粘贴豆瓣图书页链接（或数字 ID）。程序直接抓取该页面，用其中的简介 / 作者 / 出版社 / 出版年 / ISBN / 评分覆盖这本书，并标记「手动固定」（以后自动抓取不会覆盖）。</p>
+      <input id="metaLinkUrl" class="pushurl" placeholder="https://book.douban.com/subject/27107200/" spellcheck="false" autocomplete="off" />
+      <div class="dialog-actions">
+        <button class="btn" id="metaLinkCancel">取消</button>
+        <button class="btn primary" id="metaLinkSave">抓取并更新</button>
+      </div>
+      <p class="muted" id="metaLinkResult"></p>
+    </div>
+  </div>
+
   <div id="pushMask" class="mask hidden">
     <div class="dialog">
       <h3>阅读器地址</h3>
@@ -213,6 +239,6 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="./app.js?v=10"></script>
+  <script src="./app.js?v=13"></script>
 </body>
 </html>

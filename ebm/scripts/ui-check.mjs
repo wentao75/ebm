@@ -175,8 +175,32 @@ async function main() {
         meta: { 作者: "[澳]埃玛·爱德华兹", 出版社: "机械工业出版社", 出版日期: "2025-7-1", 页数: "280" },
       },
     };
+    // 元数据链接/体检的离线夹具（不联网）
+    const doubanHtml = pathMod.join(dataDir, "douban_fixture.html");
+    await fsp.writeFile(doubanHtml, `<!DOCTYPE html><html><head><title>更壮 更瘦 更强 (豆瓣)</title></head><body>
+<span property="v:itemreviewed">更壮 更瘦 更强</span><span property="v:average">7.5</span>
+<div id="info"><span class="pl"> 作者</span>: Michael Matthews<br/>
+<span class="pl"> 出版社:</span> 机械工业出版社丛<br/><span class="pl"> 出版年:</span> 2017-6<br/>
+<span class="pl"> 原作名:</span> Bigger Leaner Stronger<br/><span class="pl"> ISBN:</span> 9787518925094<br/></div>
+<div class="related_info"><h2>内容简介</h2><div class="intro"><p>本书帮助读者在十二周内增肌减脂。</p></div></div>
+</body></html>`, "utf-8");
+    const suggestJson = pathMod.join(dataDir, "suggest_fixture.json");
+    await fsp.writeFile(suggestJson, JSON.stringify([
+      { type: "b", id: "27107200", title: "更壮 更瘦 更强", author_name: "Michael Matthews", year: "2017" },
+    ]), "utf-8");
+    const uiBookMeta = {
+      generated_at: "2026-10-28T00:00:00",
+      books: {
+        "历史/明朝那些事儿.pdf": { path: "历史/明朝那些事儿.pdf", search_title: "明朝那些事儿", title: "明朝那些事儿", author: "当年明月", sources: { douban: "12345678" } },
+        "历史/万历十五年.txt": { path: "历史/万历十五年.txt", search_title: "万历十五年", title: "身体革命", author: "黄仁宇", sources: { douban: "87654321" } },
+      },
+    };
+    // 链接/体检用独立 book_meta 夹具（不动元数据面板依赖的默认夹具）
+    const metalinkMeta = pathMod.join(dataDir, "metalink_book_meta.json");
+    await fsp.writeFile(metalinkMeta, JSON.stringify(uiBookMeta, null, 1), "utf-8");
+
     fakeDevice = await startFakeDevice();
-    srv = await startServer({ libraryRoot: lib.root, dataDir, metaFixture: recoMeta, tiersFixture: TIERS_FIXTURE, withRecommend: true, extraEnv: { EBM_PUSH_TARGET: fakeDevice.url } });
+    srv = await startServer({ libraryRoot: lib.root, dataDir, metaFixture: recoMeta, tiersFixture: TIERS_FIXTURE, withRecommend: true, extraEnv: { EBM_PUSH_TARGET: fakeDevice.url, EBM_BOOK_META: pathMod.join(dataDir, "metalink_book_meta.json"), EBM_DOUBAN_HTML: pathMod.join(dataDir, "douban_fixture.html"), EBM_DOUBAN_SUGGEST: pathMod.join(dataDir, "suggest_fixture.json") } });
     chrome = spawn(CHROME, [
       "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-extensions",
       `--user-data-dir=${profile}`, `--remote-debugging-port=${DEBUG_PORT}`,
@@ -491,6 +515,31 @@ async function main() {
     check("保存地址后立即显示连接结果", String(pushHint).includes("已保存"), String(pushHint).slice(0, 60));
     await cdp.eval(`document.getElementById('pushCancel').click()`);
     check("地址对话框可关闭", (await cdp.eval(`document.getElementById("pushMask").classList.contains("hidden")`)) === true);
+
+      // 按链接更新元数据（离线夹具：豆瓣详情页 HTML）
+      check("详情含「🔗 链接更新」与「🔄 重新匹配」", detail.actions.join("").includes("链接更新") && detail.actions.join("").includes("重新匹配"), detail.actions.join(" | "));
+      await cdp.eval(`document.getElementById('dMetaLink').click()`);
+      await waitFor(async () => (await cdp.eval(`!document.getElementById('metaLinkMask').classList.contains('hidden')`)) === true, { timeout: 5000 });
+      await cdp.eval(`(() => { const i = document.getElementById('metaLinkUrl'); i.value = 'https://book.douban.com/subject/27107200/'; })()`);
+      await cdp.eval(`document.getElementById('metaLinkSave').click()`);
+      const linkResult = await waitFor(async () => {
+        const t = await cdp.eval(`document.getElementById('metaLinkResult').textContent`);
+        return String(t).includes("已更新") ? t : "";
+      }, { timeout: 30000 });
+      check("按链接更新元数据成功（显示书名/出版社/评分）", String(linkResult).includes("已更新") && String(linkResult).includes("7.5"), String(linkResult).slice(0, 70));
+      await cdp.eval(`document.getElementById('metaLinkCancel').click()`);
+      check("链接对话框可关闭", (await cdp.eval(`document.getElementById('metaLinkMask').classList.contains('hidden')`)) === true);
+
+      // 元数据体检：列出可疑记录
+      await cdp.eval(`document.getElementById('btnAudit').click()`);
+      await waitFor(async () => (await cdp.eval(`!document.getElementById('auditMask').classList.contains('hidden')`)) === true, { timeout: 5000 });
+      const auditText = await waitFor(async () => {
+        const t = await cdp.eval(`document.getElementById('auditList').textContent`);
+        return String(t).includes("体检中") ? "" : String(t);
+      }, { timeout: 60000 });
+      check("体检列出可疑记录（含文件标题与匹配标题）", String(auditText).includes("万历十五年"), String(auditText).slice(0, 80));
+      await cdp.eval(`document.getElementById('auditClose').click()`);
+      check("体检对话框可关闭", (await cdp.eval(`document.getElementById('auditMask').classList.contains('hidden')`)) === true);
     // 详情内切换书架
     await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').click()`);
     await sleep(1200);

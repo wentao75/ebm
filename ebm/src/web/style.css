@@ -450,3 +450,11 @@ body {
 
 /* 阅读器地址输入（v1.10.3） */
 .pushurl { width: 100%; box-sizing: border-box; margin: 10px 0 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; }
+
+/* 元数据体检（v1.11.0） */
+.audit-dialog { max-width: 720px; }
+.audit-list { max-height: 50vh; overflow: auto; margin: 8px 0; }
+.audit-item { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.audit-title { font-size: 13px; font-weight: 600; }
+.audit-sub { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
+.audit-actions { display: flex; gap: 8px; }

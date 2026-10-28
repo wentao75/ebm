@@ -1212,6 +1212,121 @@ async function savePushCfg(): Promise<void> {
   }
 }
 
+// ---------- 元数据体检：找出疑似错配，逐本重查/替换 ----------
+async function openAudit(): Promise<void> {
+  $("#auditMask").classList.remove("hidden");
+  await renderAuditList();
+}
+
+async function renderAuditList(): Promise<void> {
+  const list = $("#auditList") as HTMLElement;
+  list.innerHTML = `<p class="muted">体检中…（扫描 book_meta.json，最长约 1 分钟）</p>`;
+  try {
+    const d = (await (await fetch("/api/metadata/audit")).json()) as {
+      ok?: boolean;
+      suspects?: { rel: string; similarity?: number; matchedTitle?: string; fileTitle?: string; author?: string; pinned?: boolean }[];
+      total?: number;
+      error?: string;
+    };
+    if (!d.ok) {
+      list.innerHTML = `<p class="muted">体检失败：${esc(d.error || "未知错误")}</p>`;
+      return;
+    }
+    const items = d.suspects || [];
+    if (!items.length) {
+      list.innerHTML = `<p class="muted">✅ 没有发现可疑条目（共扫描出 ${d.total || 0} 条低相似度记录）</p>`;
+      return;
+    }
+    list.innerHTML = items
+      .map(
+        (it) => `<div class="audit-item" data-rel="${esc(it.rel)}">
+        <div class="audit-title">${esc(it.fileTitle || it.rel)}</div>
+        <div class="audit-sub">匹配到：${esc(it.matchedTitle || "?")} · 相似度 ${it.similarity ?? "?"} 分${it.pinned ? " · 已手动固定" : ""}</div>
+        <div class="audit-actions">
+          <button class="btn tiny" data-act="rematch">🔄 重查</button>
+          <button class="btn tiny" data-act="link" data-rel="${esc(it.rel)}">🔗 链接</button>
+        </div>
+      </div>`,
+      )
+      .join("");
+  } catch (err) {
+    list.innerHTML = `<p class="muted">体检异常：${esc(String(err))}</p>`;
+  }
+}
+
+async function rematchBook(rel: string): Promise<void> {
+  toast(`重新匹配中：${rel.split("/").pop() || rel}…`);
+  try {
+    const res = await fetch("/api/metadata/rematch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rel }),
+    });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; title?: string; douban?: string; publisher?: string; error?: string };
+    if (res.ok && d.ok) {
+      toast(`已重新匹配：${d.title || ""}${d.publisher ? " · " + d.publisher : ""}${d.douban ? " · " + d.douban + " 分" : ""}`);
+    } else {
+      toast(`重新匹配失败：${d.error || "HTTP " + res.status}`);
+    }
+  } catch (err) {
+    toast(`重新匹配异常：${String(err)}`);
+  }
+  await renderAuditList();
+  if (detailRel) setTimeout(() => void openDetail(detailRel), 800);
+}
+
+// ---------- 按链接更新元数据（用户给豆瓣链接，跳过模糊匹配）----------
+let metaLinkRel = "";
+async function openMetaLink(): Promise<void> {
+  ($("#metaLinkUrl") as HTMLInputElement).value = "";
+  ($("#metaLinkResult") as HTMLElement).textContent = "";
+  $("#metaLinkMask").classList.remove("hidden");
+  ($("#metaLinkUrl") as HTMLInputElement).focus();
+}
+
+function closeMetaLink(): void {
+  $("#metaLinkMask").classList.add("hidden");
+}
+
+async function saveMetaLink(): Promise<void> {
+  const rel = metaLinkRel || detailRel;
+  if (!rel) return;
+  const input = $("#metaLinkUrl") as HTMLInputElement;
+  const btn = $("#metaLinkSave") as HTMLButtonElement;
+  const out = $("#metaLinkResult") as HTMLElement;
+  const url = input.value.trim();
+  if (!url) {
+    out.textContent = "请先粘贴豆瓣图书页链接或数字 ID";
+    return;
+  }
+  btn.disabled = true;
+  out.textContent = "抓取中…（需要几秒）";
+  try {
+    const res = await fetch("/api/metadata/link", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rel, url }),
+    });
+    const d = (await res.json().catch(() => ({}))) as {
+      ok?: boolean; title?: string; publisher?: string; year?: string; douban?: string; introLen?: number; error?: string;
+    };
+    if (!res.ok || !d.ok) {
+      out.textContent = `更新失败：${d.error || "HTTP " + res.status}`;
+      return;
+    }
+    out.textContent = `✅ 已更新：${d.title || ""}${d.publisher ? " · " + d.publisher : ""}${d.year ? " · " + d.year : ""}${d.douban ? " · " + d.douban + " 分" : ""}${d.introLen ? ` · 简介 ${d.introLen} 字` : ""}`;
+    toast(`已按链接更新元数据：${d.title || rel}`);
+    setTimeout(() => {
+      if (detailRel === rel) void openDetail(rel);
+      closeMetaLink();
+    }, 1600);
+  } catch (err) {
+    out.textContent = `更新异常：${String(err)}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- PDF → EPUB 转换（文本版）----------
 function renderConvertResult(d: { id?: string; chapters?: number; chars?: number; sizeBytes?: number; kind?: string; imagePages?: number; note?: string }): void {
   const box = document.getElementById("dConvertBox");
@@ -1347,6 +1462,8 @@ function refreshDetailActions(): void {
     <a class="btn primary dl-link" href="${fileUrl(b.rel, "attachment")}" download="${txt(b.title)}.${b.ext.toLowerCase()}">⬇ 下载</a>
     <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 阅读器检测中…</button>
     <button class="btn convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 转 EPUB</button>
+    <button class="btn metalinkbtn" id="dMetaLink" title="粘贴豆瓣图书页链接，直接用该页面更新这本书的元数据">🔗 链接更新</button>
+    <button class="btn rematchbtn" id="dRematch" title="用修复后的匹配器重新查找这本书的豆瓣信息">🔄 重新匹配</button>
     ${detailToggleHtml(rel)}
     <button class="btn editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>`;
   void refreshPushHint(rel);
@@ -2196,6 +2313,31 @@ async function boot(): Promise<void> {
   $("#metaAll").addEventListener("click", () => void runMetaTasks(["build", "enrich", "catalog"]));
   $("#btnPushCfg").addEventListener("click", () => void openPushCfg());
   $("#pushCancel").addEventListener("click", closePushCfg);
+  $("#metaLinkCancel").addEventListener("click", closeMetaLink);
+  $("#btnAudit").addEventListener("click", () => void openAudit());
+  $("#auditClose").addEventListener("click", () => $("#auditMask").classList.add("hidden"));
+  $("#auditRefresh").addEventListener("click", () => void renderAuditList());
+  $("#auditMask").addEventListener("click", (ev) => {
+    if (ev.target === $("#auditMask")) $("#auditMask").classList.add("hidden");
+  });
+  $("#auditList").addEventListener("click", (ev) => {
+    const t = ev.target as HTMLElement;
+    const item = t.closest(".audit-item") as HTMLElement | null;
+    const rel = item?.dataset.rel || t.dataset.rel || "";
+    if (!rel) return;
+    if (t.dataset.act === "rematch") void rematchBook(rel);
+    if (t.dataset.act === "link") {
+      metaLinkRel = rel;
+      void openMetaLink();
+    }
+  });
+  $("#metaLinkSave").addEventListener("click", () => void saveMetaLink());
+  $("#metaLinkMask").addEventListener("click", (ev) => {
+    if (ev.target === $("#metaLinkMask")) closeMetaLink();
+  });
+  ($("#metaLinkUrl") as HTMLInputElement).addEventListener("keydown", (ev) => {
+    if ((ev as KeyboardEvent).key === "Enter") void saveMetaLink();
+  });
   $("#pushSave").addEventListener("click", () => void savePushCfg());
   $("#pushMask").addEventListener("click", (ev) => {
     if (ev.target === $("#pushMask")) closePushCfg();
@@ -2209,6 +2351,14 @@ async function boot(): Promise<void> {
     if (t.classList.contains("editbtn")) void openEditFromDetail();
     if (t.id === "dPush") void sendToDevice();
     if (t.id === "dConvert") void convertBook();
+    if (t.id === "dMetaLink") {
+      metaLinkRel = detailRel;
+      void openMetaLink();
+    }
+    if (t.id === "dRematch") {
+      const rel = detailRel;
+      if (rel) void rematchBook(rel);
+    }
   });
   $("#edClose").addEventListener("click", closeEdit);
   $("#editMask").addEventListener("click", (ev) => {

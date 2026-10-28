@@ -28,6 +28,7 @@ import { pathAliases, performRename, planRename, RenameLog, suggestFileName, und
 import { BookFile, LIBRARY_ROOT, LibraryScanner } from "./scanner";
 import { probeDevice, pushFile, pushTarget, setPushTarget } from "./push";
 import { convertToEpub, convertedAbs, findConverted } from "./convert";
+import { auditMeta, parseDoubanId, rematchMeta, updateMetaByDouban } from "./metaLink";
 import { isShelfName, normPage, ShelfStore, validRel } from "./shelves";
 
 const PORT = parseInt(process.env.EBM_PORT || "6722", 10);
@@ -594,6 +595,37 @@ app.get("/api/reco/archive", async (c) => {
 });
 
 // ---------- 一键下载：流式日志 ----------
+// 元数据体检：列出疑似错配（豆瓣标题与文件标题差异很大）
+app.get("/api/metadata/audit", async (c) => json(c, await auditMeta()));
+
+// 重新匹配单本书（用修复后的匹配器，不需要链接）
+app.post("/api/metadata/rematch", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { rel?: unknown } | null;
+  const rel = typeof body?.rel === "string" ? body.rel : "";
+  if (!rel) return json(c, { ok: false, error: "缺少 rel" }, 400);
+  const abs = safeResolve(rel);
+  if (!abs) return json(c, { ok: false, error: "非法路径" }, 403);
+  const r = await rematchMeta(rel);
+  return json(c, { ...r, rel, ok: r.ok }, r.ok ? 200 : 502);
+});
+
+// 用户提供豆瓣链接/ID → 直接抓取并更新该书元数据（跳过模糊匹配；写回后标记 pinned）
+app.post("/api/metadata/link", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { rel?: unknown; url?: unknown } | null;
+  const rel = typeof body?.rel === "string" ? body.rel : "";
+  const input = typeof body?.url === "string" ? body.url : "";
+  if (!rel) return json(c, { ok: false, error: "缺少 rel" }, 400);
+  const abs = safeResolve(rel);
+  if (!abs) return json(c, { ok: false, error: "非法路径" }, 403);
+  const doubanId = parseDoubanId(input);
+  if (!doubanId) {
+    return json(c, { ok: false, error: "请粘贴豆瓣图书页链接（如 https://book.douban.com/subject/27107200/）或数字 ID" }, 400);
+  }
+  const r = await updateMetaByDouban(rel, doubanId);
+  if (!r.ok) return json(c, { ok: false, error: r.error || "抓取失败" }, 502);
+  return json(c, { ...r, ok: true, rel });
+});
+
 // 设置阅读器地址（设备每次打开的网址可能不同：在设备「传书」页面复制后粘进来）
 app.post("/api/push/target", async (c) => {
   const body = (await c.req.json().catch(() => null)) as { url?: unknown } | null;
