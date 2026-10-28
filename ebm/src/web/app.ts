@@ -816,6 +816,13 @@ async function refreshBooks(): Promise<void> {
     /* ignore */
   }
   await refreshMetaNotice();
+  // 新书入库后：回到页面 / 定时轮询也能看到（无需刷新浏览器）
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) void refreshBooksIfFresh("visible");
+  });
+  window.setInterval(() => {
+    if (!document.hidden) void refreshBooksIfFresh("poll");
+  }, 30_000);
 }
 
 // ---------- 待补清单 + 人工覆盖（复用管道匹配逻辑，只写 ebm 自己的覆盖文件）----------
@@ -2023,6 +2030,43 @@ async function startPipeline(ids: number[]): Promise<void> {
 }
 
 // ---------- 事件与启动 ----------
+// ---------- 书库新鲜度检查（新书下载后不用刷新浏览器）----------
+let libRefreshBusy = false;
+
+/** 轻量探针：/api/health 只返回计数，开销极小 */
+async function libFreshDelta(): Promise<number> {
+  try {
+    const res = await fetch("/api/health", { cache: "no-store" });
+    if (!res.ok) return 0;
+    const d = (await res.json()) as { books?: number };
+    const now = Number(d.books) || 0;
+    return now > allBooks.length ? now - allBooks.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** 有新书才重新拉取书目并重绘当前视图（保留搜索/书架/分类状态） */
+async function refreshBooksIfFresh(reason: "tab" | "visible" | "poll"): Promise<boolean> {
+  if (libRefreshBusy) return false;
+  const added = await libFreshDelta();
+  if (!added) return false;
+  libRefreshBusy = true;
+  try {
+    const res = await fetch("/api/books", { cache: "no-store" });
+    const data = (await res.json()) as { books?: typeof allBooks };
+    if (!Array.isArray(data.books)) return false;
+    allBooks = data.books;
+    renderActive();
+    toast(`书库已更新：新增 ${added} 本`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    libRefreshBusy = false;
+  }
+}
+
 function switchTab(tab: string): void {
   activeTab = tab;
   savePrefs();
@@ -2033,6 +2077,8 @@ function switchTab(tab: string): void {
   if (tab === "recent") renderRecent();
   if (tab === "library") renderLibrary();
   if (tab === "reco") void loadReco();
+  // 切回来时先同步渲染（立即响应），再检查服务端是否有新书
+  if (tab === "recent" || tab === "library") void refreshBooksIfFresh("tab");
 }
 
 async function boot(): Promise<void> {

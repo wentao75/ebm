@@ -1307,6 +1307,28 @@ async function main() {
     })()`);
     check("书页 canvas 有真实墨迹（非空白）", inkRatio > 0.05, `墨迹像素 ${inkRatio}%`);
     check("阅读器无 JS 异常", cdp.exceptions.length === 0, cdp.exceptions.slice(0, 2).join(" | "));
+
+      // ---------- 书库更新后无需刷新浏览器（新鲜度自动检查）----------
+      // 先回到主页面（此前在 read.html 阅读器页，没有标签栏），让前端持有"旧"书目
+      await cdp.goto(srv.base);
+      // 等主页面完成首次渲染，并清掉上个页面残留的筛选（书架/分类/搜索）
+      await waitFor(async () => (await cdp.eval(`document.querySelectorAll('#grid .book, #gridRecent .book').length`)) > 0, { timeout: 20000 }).catch(() => false);
+      await cdp.eval(`document.querySelector('#shelves .cat[data-shelf="all"]')?.click()`);
+      await cdp.eval(`(() => { const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
+      await sleep(600);
+      // 服务端新增一本书（模拟下载/扫描入库），前端此时不知道
+      await fsp.writeFile(pathMod.join(lib.root, "历史/2026-10-28 刚下载的书.txt"), "刚下载的书内容。".repeat(80), "utf-8");
+      await sleep(2000); // 等 watcher 索引
+      // 切到「新书速递」：应自动发现新书并重绘（无需刷新浏览器）
+      await cdp.eval(`document.querySelector('.tab[data-tab="recent"]').click()`);
+      const freshSeen = await waitFor(async () => {
+        const has = await cdp.eval(`(() => [...document.querySelectorAll("#gridRecent .book")].some(b => (b.textContent||"").includes("刚下载的书")))()`);
+        return has === true;
+      }, { timeout: 20000 }).then((v) => v === true).catch(() => false);
+      check("切到「新书速递」自动出现刚入库的新书（无需刷新浏览器）", freshSeen === true, String(freshSeen));
+      const healthAfter = await (await fetch(`${srv.base}/api/health`)).json();
+      check("服务端已收录该新书", Number(healthAfter.books) > 0, `books=${healthAfter.books}`);
+
   } finally {
     cdp?.close();
     chrome?.kill("SIGKILL");
