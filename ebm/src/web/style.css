@@ -278,7 +278,7 @@ body {
 .dmain h3 { margin: 0 26px 4px 0; font-size: 17px; line-height: 1.35; }
 .dauthor { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
 .dinfo { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
-.drow { display: flex; gap: 10px; font-size: 12.5px; line-height: 1.5; }
+.drow { display: flex; gap: 10px; font-size: 12px; line-height: 1.42; }
 .drow .dk { flex: none; width: 66px; color: var(--muted); }
 .drow .dv { flex: 1; min-width: 0; word-break: break-word; }
 .dmain .chips { margin-bottom: 8px; }
@@ -287,7 +287,7 @@ body {
 .sbtn-wide.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .sbtn-wide.on[data-shelf="fav"] { background: #d9534f; border-color: #d9534f; color: #fff; }
 .sbtn-wide.on[data-shelf="done"] { background: #2e9e5b; border-color: #2e9e5b; color: #fff; }
-.dsection { margin-top: 14px; }
+.dsection { margin-top: 11px; }
 .dlabel { font-size: 11.5px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
 .dintro.muted { color: var(--muted); font-size: 12.5px; }
 .dintro, .dtoc {
@@ -459,13 +459,17 @@ body {
 .audit-sub { font-size: 12px; color: var(--muted); margin: 2px 0 6px; }
 .audit-actions { display: flex; gap: 8px; }
 
-/* 详情页动作区分组（v1.12.0） */
-#dActions { flex-direction: column; align-items: stretch; gap: 10px; }
-.actgroup { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.actgroup.act-main .btn.read { flex: 1 1 auto; }
-.actlabel { font-size: 12px; color: var(--muted); min-width: 34px; }
-.acthint { font-size: 12px; color: var(--muted); }
-.fmt { padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; font-size: 12.5px; }
-.badge2 { font-size: 11px; padding: 2px 6px; border-radius: 10px; background: var(--accent); color: #fff; opacity: .9; }
-.more-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+/* 详情页动作区：紧凑单行（v1.13.0，回退 v1.12.0 的多行分组，改为分隔线 + 弹层） */
+#dActions { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 5px; }
+#dActions .btn { padding: 4px 9px; font-size: 12.5px; }
+#dActions .btn.read { flex: 0 1 auto; min-width: 96px; }
+#dActions .btn.tiny { padding: 3px 7px; font-size: 12px; }
+#dActions .sbtn-wide { min-width: 30px; }
+#dActions .btn.read { min-width: 84px; }
+.actsep { width: 1px; height: 18px; background: var(--line); margin: 0 2px; flex: 0 0 auto; }
+.fmt { padding: 3px 5px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--fg); font: inherit; font-size: 12px; max-width: 104px; }
+.badge2 { font-size: 10.5px; padding: 1px 5px; border-radius: 9px; background: var(--accent); color: #fff; opacity: .9; }
+.morewrap2 { position: relative; display: inline-flex; }
+.more-actions { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; display: flex; flex-direction: column; gap: 4px; padding: 6px; min-width: 132px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 22px rgba(0,0,0,.18); }
 .more-actions.hidden { display: none; }
+.more-actions .btn { justify-content: flex-start; }

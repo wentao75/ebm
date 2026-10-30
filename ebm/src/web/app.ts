@@ -1155,9 +1155,10 @@ function detailToggleHtml(rel: string): string {
   const rec = shelfData[rel];
   return (["fav", "reading", "done"] as ShelfName[])
     .map((s) => {
-      const label = s === "fav" ? "♥ 喜欢" : s === "reading" ? "📖 在读" : "✓ 读完";
+      const label = s === "fav" ? "♥" : s === "reading" ? "📖" : "✓";
+      const tip = s === "fav" ? "加入/移出「喜欢」" : s === "reading" ? "标记/取消「在读」" : "标记/取消「读完」";
       const on = !!rec?.[s];
-      return `<button class="btn sbtn-wide ${on ? "on" : ""}" data-shelf="${s}" data-rel="${esc(rel)}" aria-pressed="${on ? "true" : "false"}">${label}</button>`;
+      return `<button class="btn tiny sbtn-wide ${on ? "on" : ""}" data-shelf="${s}" data-rel="${esc(rel)}" aria-pressed="${on ? "true" : "false"}" title="${tip}">${label}</button>`;
     })
     .join("");
 }
@@ -1289,12 +1290,11 @@ async function loadConvertedForDetail(rel: string): Promise<void> {
     const ext = (b?.ext || "").replace(".", "").toUpperCase();
     const cur = d.converted || null;
     sel.innerHTML =
-      `<option value="orig">原文件${ext ? `（${ext}）` : ""}</option>` +
-      (cur && b?.ext !== "epub"
-        ? `<option value="epub" data-id="${esc(cur.id)}">EPUB（已转换${cur.chapters ? `，${cur.chapters} 章` : ""}）</option>`
-        : "");
+      `<option value="orig">${ext || "原文件"}</option>` +
+      (cur && b?.ext !== "epub" ? `<option value="epub" data-id="${esc(cur.id)}">EPUB${cur.chapters ? `·${cur.chapters}章` : ""}</option>` : "");
     sel.dataset.epubId = cur?.id || "";
     sel.classList.toggle("hidden", sel.options.length <= 1);
+    sel.title = cur ? "选择推送格式：原文件或已转换的 EPUB" : "选择推送格式";
     if (badge) {
       badge.classList.toggle("hidden", !cur);
       badge.textContent = cur ? "已转换 EPUB" : "";
@@ -1491,32 +1491,28 @@ function refreshDetailActions(): void {
   const actions = $("#dActions");
   actions.dataset.dataless = b.dataless ? "1" : "0";
   actions.dataset.rel = rel;
-  // 分组排列：主操作 / 书架 / 转换与维护（低频操作收进「更多」，减少误点）
+  // 紧凑单行：主操作 → 发送(+格式) → 书架 → EPUB/更多（低频操作放弹层，不占布局空间）
   actions.innerHTML = `
-    <div class="actgroup act-main">
       ${canRead ? `<a class="btn read" href="${readUrl(b)}">${rec?.page ? "▶ 继续阅读" : "📖 阅读"}</a>` : `<a class="btn read" disabled>预览不可用</a>`}
       <a class="btn primary dl-link" href="${fileUrl(b.rel, "attachment")}" download="${txt(b.title)}.${b.ext.toLowerCase()}">⬇ 下载</a>
-    </div>
-    <div class="actgroup act-send">
-      <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 阅读器检测中…</button>
+      <span class="actsep"></span>
+      <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 发送</button>
       <select class="fmt hidden" id="dPushFormat" title="选择推送到阅读器的格式"></select>
-      <span class="acthint" id="dPushHint"></span>
-    </div>
-    <div class="actgroup act-shelf">
-      <span class="actlabel">书架</span>
+      <span class="actsep"></span>
       ${detailToggleHtml(rel)}
-    </div>
-    <div class="actgroup act-tools">
-      <span class="actlabel">EPUB</span>
-      <button class="btn convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 转 EPUB</button>
+      <span class="actsep"></span>
+      <button class="btn tiny convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 EPUB</button>
       <span class="badge2 hidden" id="dConvertedBadge"></span>
-      <button class="btn morebtn" id="dMore" aria-expanded="false" title="元数据修正 / 编辑等低频操作">⚙ 更多</button>
-      <span class="more-actions hidden" id="dMoreActions">
-        <button class="btn metalinkbtn" id="dMetaLink" title="粘贴豆瓣图书页链接，直接用该页面更新这本书的元数据">🔗 链接更新</button>
-        <button class="btn rematchbtn" id="dRematch" title="用修复后的匹配器重新查找这本书的豆瓣信息">🔄 重新匹配</button>
-        <button class="btn editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>
-      </span>
-    </div>`;
+      <span class="morewrap2">
+        <button class="btn tiny morebtn" id="dMore" aria-expanded="false" title="元数据修正 / 编辑等低频操作">⚙ 更多</button>
+        <div class="more-actions hidden" id="dMoreActions">
+          <button class="btn tiny metalinkbtn" id="dMetaLink" title="粘贴豆瓣图书页链接，直接用该页面更新这本书的元数据">🔗 链接更新</button>
+          <button class="btn tiny rematchbtn" id="dRematch" title="用修复后的匹配器重新查找这本书的豆瓣信息">🔄 重新匹配</button>
+          <button class="btn tiny editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>
+        </div>
+      </span>`;
+  void refreshPushHint(rel);
+  void loadConvertedForDetail(rel);
   void refreshPushHint(rel);
   void loadConvertedForDetail(rel);
 }
