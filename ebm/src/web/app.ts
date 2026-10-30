@@ -1,3 +1,102 @@
+/** 通用确认对话框（Promise 版，复用底部确认弹窗） */
+function confirmAction(opts: { title: string; text: string; hint?: string; okLabel?: string; cancelLabel?: string }): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    ($("#confirmTitle") as HTMLElement).textContent = opts.title;
+    ($("#confirmText") as HTMLElement).textContent = opts.text;
+    ($("#confirmHint") as HTMLElement).textContent = opts.hint || "";
+    const ok = $("#confirmOk") as HTMLButtonElement;
+    const cancel = $("#confirmCancel") as HTMLButtonElement;
+    ok.textContent = opts.okLabel || "确定";
+    cancel.textContent = opts.cancelLabel || "取消";
+    $("#confirmMask").classList.remove("hidden");
+    const finish = (v: boolean): void => {
+      $("#confirmMask").classList.add("hidden");
+      ok.onclick = null;
+      cancel.onclick = null;
+      resolve(v);
+    };
+    ok.onclick = () => finish(true);
+    cancel.onclick = () => finish(false);
+  });
+}
+
+async function pushWithFormat(fmt: "orig" | "epub"): Promise<void> {
+  const rel = detailRel;
+  if (!rel) return;
+  const book = allBooks.find((x) => x.rel === rel);
+  if (fmt === "epub" && !convertedInfo) {
+    const ok = await confirmAction({
+      title: "先转换再发送？",
+      text: `《${book?.title || rel}》还没有转成 EPUB。是否现在转换，转换完成后自动发送到阅读器？`,
+      hint: "转换在服务端进行（文本版几秒；插图多的书可能需要几十秒）",
+      okLabel: "开始转换并发送",
+      cancelLabel: "取消",
+    });
+    if (!ok) return;
+    toast("正在转换 EPUB…转换完成后会自动发送");
+    const id = await convertForSend(rel);
+    if (!id) return;
+    convertedInfo = { id };
+    void loadConvertedForDetail(rel);
+  }
+  const btn = document.getElementById("dPush") as HTMLButtonElement | null;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "📤 发送中…";
+  }
+  try {
+    const body = fmt === "epub" && convertedInfo ? { converted: convertedInfo.id } : { rel };
+    const res = await fetch("/api/push/send", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; bytes?: number; ms?: number; message?: string; error?: string };
+    if (res.ok && d.ok) {
+      const mb = ((d.bytes || 0) / 1024 / 1024).toFixed(1);
+      toast(`已发送到阅读器（${fmt === "epub" ? "EPUB" : "原文件"}）：${book?.title || rel}（${mb}MB · ${((d.ms || 0) / 1000).toFixed(1)}s）${d.message ? " · " + d.message : ""}`);
+    } else {
+      toast(`发送失败：${d.error || "HTTP " + res.status}`);
+      pushStatusCache = null;
+    }
+  } catch (err) {
+    toast(`发送异常：${String(err)}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "📤 发送到阅读器";
+    }
+    closeMenus();
+  }
+}
+
+/** 为发送而转换：返回转换产物 id（失败返回 null） */
+async function convertForSend(rel: string): Promise<string | null> {
+  try {
+    const res = await fetch("/api/convert", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rel }),
+    });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; chapters?: number; error?: string };
+    if (res.ok && d.ok && d.id) {
+      toast(`转换完成（${d.chapters || 0} 章），即将发送…`);
+      return d.id;
+    }
+    toast(`转换失败：${d.error || "HTTP " + res.status}`);
+    return null;
+  } catch (err) {
+    toast(`转换异常：${String(err)}`);
+    return null;
+  }
+}
+
+function closeMenus(): void {
+  document.getElementById("dPushMenu")?.classList.add("hidden");
+  document.getElementById("dMoreActions")?.classList.add("hidden");
+  document.getElementById("dMore")?.setAttribute("aria-expanded", "false");
+}
+
 // app.ts —— ebm 前端（原生 TS，无框架；客户端瞬时过滤，805 本毫秒级）
 interface Book {
   rel: string;
@@ -1277,31 +1376,27 @@ async function rematchBook(rel: string): Promise<void> {
 }
 
 // ---------- 推送格式选择（原文件 / 已转换的 EPUB）----------
+let convertedInfo: { id: string; chapters?: number } | null = null;
+
+/** 查这本书是否已转换过 EPUB，用于发送菜单里的 EPUB 选项 */
 async function loadConvertedForDetail(rel: string): Promise<void> {
   try {
     const d = (await (await fetch(`/api/converted?rel=${encodeURIComponent(rel)}`)).json()) as {
-      converted?: { id: string; chapters?: number; sizeBytes?: number } | null;
+      converted?: { id: string; chapters?: number } | null;
     };
-    if (detailRel !== rel) return; // 期间换了书
-    const sel = document.getElementById("dPushFormat") as HTMLSelectElement | null;
-    const badge = document.getElementById("dConvertedBadge");
-    if (!sel) return;
-    const b = allBooks.find((x) => x.rel === rel);
-    const ext = (b?.ext || "").replace(".", "").toUpperCase();
-    const cur = d.converted || null;
-    sel.innerHTML =
-      `<option value="orig">${ext || "原文件"}</option>` +
-      (cur && b?.ext !== "epub" ? `<option value="epub" data-id="${esc(cur.id)}">EPUB${cur.chapters ? `·${cur.chapters}章` : ""}</option>` : "");
-    sel.dataset.epubId = cur?.id || "";
-    sel.classList.toggle("hidden", sel.options.length <= 1);
-    sel.title = cur ? "选择推送格式：原文件或已转换的 EPUB" : "选择推送格式";
-    if (badge) {
-      badge.classList.toggle("hidden", !cur);
-      badge.textContent = cur ? "已转换 EPUB" : "";
-      badge.title = cur ? "这本书之前转换过 EPUB，可在推送格式里选择" : "";
+    if (detailRel !== rel) return;
+    convertedInfo = d.converted || null;
+    const epubBtn = document.getElementById("dPushEpub");
+    if (epubBtn) {
+      epubBtn.textContent = convertedInfo
+        ? `发送 EPUB（已转换${convertedInfo.chapters ? ` · ${convertedInfo.chapters} 章` : ""}）`
+        : "发送 EPUB（需先转换）";
+      epubBtn.title = convertedInfo
+        ? "发送之前转换好的 EPUB"
+        : "这本书还没转换 EPUB：点击后会先转换，完成后自动发送";
     }
   } catch {
-    /* 忽略：仅影响格式选择器 */
+    convertedInfo = null;
   }
 }
 
@@ -1495,22 +1590,26 @@ function refreshDetailActions(): void {
   actions.innerHTML = `
       ${canRead ? `<a class="btn read" href="${readUrl(b)}">${rec?.page ? "▶ 继续阅读" : "📖 阅读"}</a>` : `<a class="btn read" disabled>预览不可用</a>`}
       <a class="btn primary dl-link" href="${fileUrl(b.rel, "attachment")}" download="${txt(b.title)}.${b.ext.toLowerCase()}">⬇ 下载</a>
-      <span class="actsep"></span>
-      <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 发送</button>
-      <select class="fmt hidden" id="dPushFormat" title="选择推送到阅读器的格式"></select>
-      <span class="actsep"></span>
-      ${detailToggleHtml(rel)}
-      <span class="actsep"></span>
-      <button class="btn tiny convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 EPUB</button>
-      <span class="badge2 hidden" id="dConvertedBadge"></span>
+      <span class="pushwrap">
+        <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 阅读器检测中…</button>
+        <div class="push-menu hidden" id="dPushMenu">
+          <button class="btn tiny" data-push="orig" id="dPushOrig">发送 原文件</button>
+          <button class="btn tiny" data-push="epub" id="dPushEpub">发送 EPUB</button>
+          <div class="pmenu-hint" id="dPushMenuHint"></div>
+        </div>
+      </span>
       <span class="morewrap2">
-        <button class="btn tiny morebtn" id="dMore" aria-expanded="false" title="元数据修正 / 编辑等低频操作">⚙ 更多</button>
+        <button class="btn tiny morebtn" id="dMore" aria-expanded="false" title="转换 / 元数据修正 / 编辑">⚙ 更多</button>
         <div class="more-actions hidden" id="dMoreActions">
+          <button class="btn tiny convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 转 EPUB</button>
           <button class="btn tiny metalinkbtn" id="dMetaLink" title="粘贴豆瓣图书页链接，直接用该页面更新这本书的元数据">🔗 链接更新</button>
           <button class="btn tiny rematchbtn" id="dRematch" title="用修复后的匹配器重新查找这本书的豆瓣信息">🔄 重新匹配</button>
           <button class="btn tiny editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>
         </div>
       </span>`;
+  // 书架三态紧跟书名右侧（与图书本身关联更直观）
+  const titleShelf = document.getElementById("dTitleShelf");
+  if (titleShelf) titleShelf.innerHTML = detailToggleHtml(rel);
   void refreshPushHint(rel);
   void loadConvertedForDetail(rel);
   void refreshPushHint(rel);
@@ -2396,8 +2495,19 @@ async function boot(): Promise<void> {
   $("#detailClose").addEventListener("click", closeDetail);
   $("#dActions").addEventListener("click", (ev) => {
     const t = ev.target as HTMLElement;
+    if (t.id === "dPush" || t.closest("#dPush")) {
+      const menu = document.getElementById("dPushMenu");
+      const opening = menu?.classList.contains("hidden") === true;
+      closeMenus();
+      if (opening) menu?.classList.remove("hidden");
+      return;
+    }
+    const pushItem = t.closest("[data-push]") as HTMLElement | null;
+    if (pushItem) {
+      void pushWithFormat((pushItem.dataset.push as "orig" | "epub") || "orig");
+      return;
+    }
     if (t.classList.contains("editbtn")) void openEditFromDetail();
-    if (t.id === "dPush") void sendToDevice();
     if (t.id === "dConvert") void convertBook();
     if (t.id === "dMetaLink") {
       metaLinkRel = detailRel;
@@ -2405,6 +2515,7 @@ async function boot(): Promise<void> {
     }
     if (t.id === "dMore") {
       const more = document.getElementById("dMoreActions");
+      document.getElementById("dPushMenu")?.classList.add("hidden");
       const open = more?.classList.toggle("hidden") === false;
       (t as HTMLButtonElement).setAttribute("aria-expanded", open ? "true" : "false");
     }
@@ -2429,6 +2540,11 @@ async function boot(): Promise<void> {
   });
   void refreshMetaNotice();
   void loadReco(); // 开页即拉一次待确认清单，让徽标直接显示待处理数量
+  document.addEventListener("click", (ev) => {
+    const t = ev.target as HTMLElement;
+    if (t.closest("#dPushMenu") || t.closest("#dPush") || t.closest("#dMoreActions") || t.closest("#dMore")) return;
+    closeMenus();
+  });
   $("#search").addEventListener("input", renderActive);
   $("#moreLibrary").addEventListener("click", showMore);
   $("#moreRecent").addEventListener("click", showMore);

@@ -510,6 +510,9 @@ async function main() {
     const pushLabel = await cdp.eval(`document.getElementById('dPush').textContent`);
     check("详情有「发送到阅读器」且设备在线时可用", String(pushLabel).includes("发送到阅读器"), String(pushLabel));
     await cdp.eval(`document.getElementById('dPush').click()`);
+    const menuShown = await cdp.eval(`!document.getElementById('dPushMenu').classList.contains('hidden')`);
+    check("点击发送弹出格式菜单（原文件 / EPUB）", menuShown === true, String(menuShown));
+    await cdp.eval(`document.getElementById('dPushOrig').click()`);
     const pushToast = await waitFor(async () => {
       const t = await cdp.eval(`document.getElementById('toast').textContent`);
       return String(t).includes("已发送到阅读器") ? t : "";
@@ -561,20 +564,22 @@ async function main() {
       await cdp.eval(`document.getElementById('dMore').click()`);
       const moreAfter = await cdp.eval(`!document.getElementById('dMoreActions').classList.contains('hidden')`);
       check("「更多」默认收起、点击展开元数据/编辑操作", moreBefore === true && moreAfter === true, `before=${moreBefore} after=${moreAfter}`);
+
+      // 书架三态紧跟书名右侧（用户建议：与图书本身关联更直观）
+      const shelfInTitle = await cdp.eval(`document.querySelectorAll('#dTitleShelf .sbtn-wide').length`);
+      check("书架三态位于书名右侧", Number(shelfInTitle) === 3, `${shelfInTitle} 个`);
       await cdp.eval(`document.getElementById('dMore').click()`);
 
-      // 已转换过的书：推送格式可选 EPUB，并有「已转换」徽标
-      const fmtOpts = await cdp.eval(`[...document.querySelectorAll('#dPushFormat option')].map(o => o.textContent).join('|')`);
-      check("已转换的书可选推送格式（含 EPUB）", String(fmtOpts).includes("EPUB"), String(fmtOpts));
-      const badgeShown = await cdp.eval(`!document.getElementById('dConvertedBadge').classList.contains('hidden')`);
-      check("详情显示「已转换 EPUB」徽标", badgeShown === true, String(badgeShown));
+      // 已转换过的书：发送菜单里的 EPUB 项应标出"已转换"
+      const epubItem = await cdp.eval(`document.getElementById('dPushEpub') ? document.getElementById('dPushEpub').textContent : ''`);
+      check("已转换的书在发送菜单里显示「发送 EPUB（已转换）」", String(epubItem).includes("已转换"), String(epubItem));
     // 详情内切换书架
-    await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').click()`);
+    await cdp.eval(`document.querySelector('#dTitleShelf .sbtn-wide[data-shelf="reading"]').click()`);
     await sleep(1200);
-    check("详情内可切换书架", (await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').classList.contains('on')`)) === true);
-    await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').click()`);
+    check("详情内可切换书架", (await cdp.eval(`document.querySelector('#dTitleShelf .sbtn-wide[data-shelf="reading"]').classList.contains('on')`)) === true);
+    await cdp.eval(`document.querySelector('#dTitleShelf .sbtn-wide[data-shelf="reading"]').click()`);
     await sleep(1200);
-    check("详情内可取消书架标记", (await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').classList.contains('on')`)) === false);
+    check("详情内可取消书架标记", (await cdp.eval(`document.querySelector('#dTitleShelf .sbtn-wide[data-shelf="reading"]').classList.contains('on')`)) === false);
     await cdp.eval(`document.getElementById('detailClose').click()`);
     await sleep(500);
     check("详情可关闭（✕）", (await cdp.eval(`document.getElementById('detailMask').classList.contains('hidden')`)) === true);
