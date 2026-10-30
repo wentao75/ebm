@@ -40,6 +40,8 @@ export interface ConvertResult {
   pages?: number;
   textPages?: number;
   imagePages?: number;
+  coverPage?: number;
+  hasCover?: boolean;
   note?: string;
   chapters?: number;
   chars?: number;
@@ -156,6 +158,8 @@ export async function convertToEpub(abs: string, title: string, author: string, 
     pages: rec.pages,
     textPages: rec.textPages,
     imagePages: rec.imagePages,
+    coverPage: (d.coverPage as number) || undefined,
+    hasCover: d.hasCover === true,
     note:
       rec.kind === "scanned-images"
         ? `全书以图片页保留（${rec.imagePages} 页），内容完整但不可重排`

@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""PDF → EPUB（文本 + 图片页完整保留）
+"""PDF → EPUB（文本 + 图片页完整保留 + 内嵌封面）
 
 用法：
     .venv/bin/python scripts/pdf2epub.py <input.pdf> <output.epub> [title] [author]
 输出：stdout 一行 JSON：
-    {"kind":"text","pages":410,"textPages":404,"imagePages":6,"chars":288598,"chapters":21,"out":"...","bytes":806904}
-    {"kind":"hybrid","pages":403,"textPages":201,"imagePages":202,...}
-    {"kind":"scanned-images","pages":325,"textPages":5,"imagePages":320,...}   # 全书以图片页保留（完整）
+    {"kind":"text","pages":410,"textPages":404,"imagePages":6,"chars":288598,"chapters":21,
+     "coverPage":1,"hasCover":true,"out":"...","bytes":806904}
 
-设计（v2，2026-10-26 修复用户报告的"缺页"缺陷）：
-  - **按页序**构建内容流：有文字层的页 → 标题/段落；无文字层的页 → 渲染成图片页（默认 110dpi JPEG）
-  - 章节只切分文字内容，图片页保持原位（插图/图谱/扫描页都不会丢）
-  - 产出最小 EPUB3（mimetype 不压缩 + container + nav + ncx + content.opf + img/）
+设计（v3，2026-10-30 增加封面，修复电纸书列表缩略图全部一样的问题）：
+  - 按页序构建内容流：有文字层的页 → 标题/段落；无文字层的页 → 渲染成图片页（默认 110dpi JPEG）
+  - 章节只在标题处切分，图片页保持原位（插图/图谱/扫描页都不会丢）
+  - **封面**：取封面页渲染 150dpi JPEG 写入 OEBPS/cover.jpg，并在 OPF 里声明
+    （`<meta name="cover" content="cover-image"/>` + `properties="cover-image"` + cover.xhtml 置 spine 首位）
+    —— 没有封面时，多数电纸书会用统一默认图标，导致所有书缩略图一样
 """
 import json
 import os
 import re
 import statistics
 import sys
+import time
 import zipfile
 from html import escape
 
@@ -27,6 +29,8 @@ import pymupdf
 IMG_DPI = int(os.environ.get("EBM_CONVERT_IMG_DPI", "110"))
 IMG_QUALITY = int(os.environ.get("EBM_CONVERT_IMG_QUALITY", "70"))
 TEXT_PAGE_MIN_CHARS = 20
+COVER_DPI = int(os.environ.get("EBM_CONVERT_COVER_DPI", "150"))
+COVER_QUALITY = int(os.environ.get("EBM_CONVERT_COVER_QUALITY", "82"))
 
 
 def page_text_items(page):
@@ -48,6 +52,34 @@ def page_text_items(page):
     return items
 
 
+def pick_cover_page(doc):
+    """选封面页：优先第 1 页；若几乎全白（空白页/空白衬页），往后找前 6 页中第一张有内容的。"""
+    for pno in range(min(6, doc.page_count)):
+        page = doc[pno]
+        pix = page.get_pixmap(dpi=60, colorspace=pymupdf.csRGB, alpha=False)
+        w, h, n = pix.width, pix.height, pix.n
+        if w == 0 or h == 0:
+            continue
+        samples = pix.samples
+        step = max(1, (w * h) // 4000)
+        nonwhite = total = 0
+        for i in range(0, w * h, step):
+            idx = i * n
+            if samples[idx] < 235 or samples[idx + 1] < 235 or samples[idx + 2] < 235:
+                nonwhite += 1
+            total += 1
+        if total and nonwhite / total > 0.008:
+            return pno
+    return 0
+
+
+def render_cover(doc, pno, dpi=COVER_DPI, quality=COVER_QUALITY):
+    """渲染封面页为 JPEG（电纸书列表缩略图用）"""
+    page = doc[pno]
+    pix = page.get_pixmap(dpi=dpi, colorspace=pymupdf.csRGB, alpha=False)
+    return pix.tobytes("jpeg", jpg_quality=quality)
+
+
 def build_content(doc):
     """按页序返回内容流：[(("h"|"p"), text) | ("img", pno, jpeg_bytes)]"""
     sizes = []
@@ -65,7 +97,6 @@ def build_content(doc):
         items = page_text_items(page)
         plain = "".join(i["t"] for i in items)
         if len(plain) < TEXT_PAGE_MIN_CHARS:
-            # 无文字层 → 渲染整页为图片（插图页/扫描页都靠它保留内容）
             pix = page.get_pixmap(dpi=IMG_DPI, colorspace=pymupdf.csRGB, alpha=False)
             jpeg = pix.tobytes("jpeg", jpg_quality=IMG_QUALITY)
             content.append(("img", pno, jpeg))
@@ -141,9 +172,29 @@ def chapter_xhtml(title, items):
     )
 
 
-def write_epub(out_path, title, author, chapters, images):
+def cover_xhtml():
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE html>\n'
+        '<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh"><head><meta charset="utf-8"/>'
+        "<title>封面</title>"
+        "<style>html,body{margin:0;padding:0;background:#000}"
+        "img{display:block;max-width:100%;height:auto;margin:0 auto}</style></head>"
+        '<body><img src="cover.jpg" alt="封面"/></body></html>'
+    )
+
+
+def write_epub(out_path, title, author, chapters, images, cover=None):
     def cname(i):
         return f"chapter{i}.xhtml"
+
+    meta_cover = '<meta name="cover" content="cover-image"/>' if cover else ""
+    manifest_cover = (
+        '<item id="cover-image" href="cover.jpg" media-type="image/jpeg" properties="cover-image"/>'
+        '<item id="coverpage" href="cover.xhtml" media-type="application/xhtml+xml"/>'
+        if cover
+        else ""
+    )
+    spine_cover = '<itemref idref="coverpage"/>' if cover else ""
 
     with zipfile.ZipFile(out_path, "w") as z:
         z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
@@ -160,6 +211,9 @@ def write_epub(out_path, title, author, chapters, images):
             "h1,h2{text-align:center;margin:1.1em 0 .7em}p{text-indent:2em;margin:.3em 0}"
             ".pageimg{margin:0;padding:0}.pageimg img{max-width:100%;height:auto;display:block;margin:0 auto}",
         )
+        if cover:
+            z.writestr("OEBPS/cover.jpg", cover, compress_type=zipfile.ZIP_STORED)
+            z.writestr("OEBPS/cover.xhtml", cover_xhtml())
         for i, (ct, items) in enumerate(chapters, 1):
             z.writestr(f"OEBPS/{cname(i)}", chapter_xhtml(ct, items))
         for pno, jpeg in images:
@@ -196,12 +250,16 @@ def write_epub(out_path, title, author, chapters, images):
             f'<dc:identifier id="bookid">urn:uuid:ebm-{abs(hash(title)) % (10**12)}</dc:identifier>'
             f"<dc:title>{escape(title)}</dc:title><dc:language>zh</dc:language>"
             + (f"<dc:creator>{escape(author)}</dc:creator>" if author else "")
+            + f'<meta property="dcterms:modified">{time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}</meta>'
+            + meta_cover
             + '</metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
             '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
             '<item id="css" href="style.css" media-type="text/css"/>'
+            + manifest_cover
             + "".join(f'<item id="c{i}" href="{cname(i)}" media-type="application/xhtml+xml"/>' for i in range(1, len(chapters) + 1))
             + manifest_imgs
             + '</manifest><spine toc="ncx">'
+            + spine_cover
             + "".join(f'<itemref idref="c{i}"/>' for i in range(1, len(chapters) + 1))
             + "</spine></package>",
         )
@@ -224,14 +282,15 @@ def main():
             return 0
         chapters = split_chapters(content)
         images = [(item[1], item[2]) for item in content if item[0] == "img"]
-        # 分类：无图片页 → text；有图片页 → hybrid；几乎无文字 → 图片版（内容仍完整保留）
         if image_pages == 0:
             kind = "text"
         elif text_pages <= max(1, page_count // 20):
             kind = "scanned-images"
         else:
             kind = "hybrid"
-        write_epub(out, title, author, chapters, images)
+        cover_pno = pick_cover_page(doc)
+        cover_jpeg = render_cover(doc, cover_pno)
+        write_epub(out, title, author, chapters, images, cover=cover_jpeg)
         print(
             json.dumps(
                 {
@@ -241,6 +300,8 @@ def main():
                     "imagePages": image_pages,
                     "chars": chars,
                     "chapters": len(chapters),
+                    "coverPage": cover_pno + 1,
+                    "hasCover": bool(cover_jpeg),
                     "out": out,
                     "bytes": os.path.getsize(out),
                 },

@@ -118,6 +118,12 @@ test("文本版 PDF → EPUB：真实转换出合法 EPUB（mimetype + container
     assert.ok(text.includes("application/epub+zip"), "应包含 mimetype");
     assert.ok(text.includes("META-INF/container.xml"), "应包含 container.xml");
     assert.ok(text.includes("OEBPS/content.opf"), "应包含 content.opf");
+    // 封面（v1.11.1）：电纸书列表缩略图靠它，缺了会全部显示同一张默认图
+    assert.ok(text.includes("OEBPS/cover.jpg"), "应包含封面图 cover.jpg");
+    assert.ok(text.includes("OEBPS/cover.xhtml"), "应包含封面页 cover.xhtml");
+    assert.ok(text.includes('properties="cover-image"'), "OPF 应声明 cover-image");
+    assert.ok(text.includes('name="cover"'), "OPF 应有 meta name=cover（兼容旧阅读器）");
+    assert.ok(/<spine[^>]*>\s*<itemref idref="coverpage"\/>/.test(text), "spine 首项应为封面试");
 
     // 幂等：同一文件再转一次 → 同一个 id
     const again = await convertToEpub(abs, "测试文本书", "某人", rel);
