@@ -269,6 +269,10 @@
 - 重型任务：走共享任务锁（忙时 **409**）；iCloud 云端书先取回，最多等 60s（未完成 **202** + `pendingMaterialize`）
 - 产物：`eval/data/converted/<id>.epub`（不入书库、不参与扫描）
 
+### `GET /api/converted?rel=<书库相对路径>`
+查这本书是否已转换过 EPUB（详情页"推送格式"选择用）。
+- 响应 `{ ok:true, converted: { id, kind, chapters, chars, sizeBytes, imagePages, createdAt } | null }`
+
 ### `GET /api/converted/:id`
 下载转换产物（`application/epub+zip`，`Content-Disposition` 用 UTF-8 文件名）。不存在 → 404。
 

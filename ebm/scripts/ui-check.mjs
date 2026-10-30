@@ -6,6 +6,7 @@
 // 覆盖：书库页书架分组/卡片按钮/偏好记忆/默认进入规则、阅读器缩放与单页模式与续读、截图像素回归
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -199,7 +200,21 @@ async function main() {
     const metalinkMeta = pathMod.join(dataDir, "metalink_book_meta.json");
     await fsp.writeFile(metalinkMeta, JSON.stringify(uiBookMeta, null, 1), "utf-8");
 
-    fakeDevice = await startFakeDevice();
+    // 预置一条"已转换 EPUB"记录：验证详情页推送格式选择与「已转换」徽标
+    {
+      const convRel = "历史/明朝那些事儿.pdf";
+      const convAbs = pathMod.join(lib.root, convRel);
+      const convId = crypto.createHash("sha1").update(convAbs).digest("hex").slice(0, 12);
+      await fsp.mkdir(pathMod.join(dataDir, "converted"), { recursive: true });
+      await fsp.writeFile(pathMod.join(dataDir, "converted", `${convId}.epub`), "PK\x03\x04dummy", "utf-8");
+      await fsp.writeFile(
+        pathMod.join(dataDir, "converted", "index.json"),
+        JSON.stringify({ [convId]: { id: convId, srcRel: convRel, title: "明朝那些事儿", file: `${convId}.epub`, kind: "text", pages: 12, textPages: 12, imagePages: 0, chapters: 3, chars: 1200, sizeBytes: 11, createdAt: Date.now() } }, null, 1),
+        "utf-8",
+      );
+    }
+
+    fakeDevice = await startFakeDevice();    fakeDevice = await startFakeDevice();
     srv = await startServer({ libraryRoot: lib.root, dataDir, metaFixture: recoMeta, tiersFixture: TIERS_FIXTURE, withRecommend: true, extraEnv: { EBM_PUSH_TARGET: fakeDevice.url, EBM_BOOK_META: pathMod.join(dataDir, "metalink_book_meta.json"), EBM_DOUBAN_HTML: pathMod.join(dataDir, "douban_fixture.html"), EBM_DOUBAN_SUGGEST: pathMod.join(dataDir, "suggest_fixture.json") } });
     chrome = spawn(CHROME, [
       "--headless=new", "--disable-gpu", "--no-sandbox", "--disable-extensions",
@@ -540,6 +555,19 @@ async function main() {
       check("体检列出可疑记录（含文件标题与匹配标题）", String(auditText).includes("万历十五年"), String(auditText).slice(0, 80));
       await cdp.eval(`document.getElementById('auditClose').click()`);
       check("体检对话框可关闭", (await cdp.eval(`document.getElementById('auditMask').classList.contains('hidden')`)) === true);
+
+      // 「⚙ 更多」收纳低频操作（默认收起，避免误点）
+      const moreBefore = await cdp.eval(`document.getElementById('dMoreActions').classList.contains('hidden')`);
+      await cdp.eval(`document.getElementById('dMore').click()`);
+      const moreAfter = await cdp.eval(`!document.getElementById('dMoreActions').classList.contains('hidden')`);
+      check("「更多」默认收起、点击展开元数据/编辑操作", moreBefore === true && moreAfter === true, `before=${moreBefore} after=${moreAfter}`);
+      await cdp.eval(`document.getElementById('dMore').click()`);
+
+      // 已转换过的书：推送格式可选 EPUB，并有「已转换」徽标
+      const fmtOpts = await cdp.eval(`[...document.querySelectorAll('#dPushFormat option')].map(o => o.textContent).join('|')`);
+      check("已转换的书可选推送格式（含 EPUB）", String(fmtOpts).includes("EPUB"), String(fmtOpts));
+      const badgeShown = await cdp.eval(`!document.getElementById('dConvertedBadge').classList.contains('hidden')`);
+      check("详情显示「已转换 EPUB」徽标", badgeShown === true, String(badgeShown));
     // 详情内切换书架
     await cdp.eval(`document.querySelector('#dActions .sbtn-wide[data-shelf="reading"]').click()`);
     await sleep(1200);

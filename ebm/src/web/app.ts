@@ -1275,6 +1275,36 @@ async function rematchBook(rel: string): Promise<void> {
   if (detailRel) setTimeout(() => void openDetail(detailRel), 800);
 }
 
+// ---------- 推送格式选择（原文件 / 已转换的 EPUB）----------
+async function loadConvertedForDetail(rel: string): Promise<void> {
+  try {
+    const d = (await (await fetch(`/api/converted?rel=${encodeURIComponent(rel)}`)).json()) as {
+      converted?: { id: string; chapters?: number; sizeBytes?: number } | null;
+    };
+    if (detailRel !== rel) return; // 期间换了书
+    const sel = document.getElementById("dPushFormat") as HTMLSelectElement | null;
+    const badge = document.getElementById("dConvertedBadge");
+    if (!sel) return;
+    const b = allBooks.find((x) => x.rel === rel);
+    const ext = (b?.ext || "").replace(".", "").toUpperCase();
+    const cur = d.converted || null;
+    sel.innerHTML =
+      `<option value="orig">原文件${ext ? `（${ext}）` : ""}</option>` +
+      (cur && b?.ext !== "epub"
+        ? `<option value="epub" data-id="${esc(cur.id)}">EPUB（已转换${cur.chapters ? `，${cur.chapters} 章` : ""}）</option>`
+        : "");
+    sel.dataset.epubId = cur?.id || "";
+    sel.classList.toggle("hidden", sel.options.length <= 1);
+    if (badge) {
+      badge.classList.toggle("hidden", !cur);
+      badge.textContent = cur ? "已转换 EPUB" : "";
+      badge.title = cur ? "这本书之前转换过 EPUB，可在推送格式里选择" : "";
+    }
+  } catch {
+    /* 忽略：仅影响格式选择器 */
+  }
+}
+
 // ---------- 按链接更新元数据（用户给豆瓣链接，跳过模糊匹配）----------
 let metaLinkRel = "";
 async function openMetaLink(): Promise<void> {
@@ -1422,11 +1452,15 @@ async function sendToDevice(): Promise<void> {
     btn.disabled = true;
     btn.textContent = "📤 发送中…";
   }
+  const sel = document.getElementById("dPushFormat") as HTMLSelectElement | null;
+  const mode = sel?.value || "orig";
+  const epubId = sel?.dataset.epubId || "";
+  const useEpub = mode === "epub" && epubId;
   try {
     const res = await fetch("/api/push/send", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ rel }),
+      body: JSON.stringify(useEpub ? { converted: epubId } : { rel }),
     });
     const d = (await res.json().catch(() => ({}))) as { ok?: boolean; bytes?: number; ms?: number; message?: string; error?: string };
     if (res.ok && d.ok) {
@@ -1457,16 +1491,34 @@ function refreshDetailActions(): void {
   const actions = $("#dActions");
   actions.dataset.dataless = b.dataless ? "1" : "0";
   actions.dataset.rel = rel;
+  // 分组排列：主操作 / 书架 / 转换与维护（低频操作收进「更多」，减少误点）
   actions.innerHTML = `
-    ${canRead ? `<a class="btn read" href="${readUrl(b)}">${rec?.page ? "▶ 继续阅读" : "📖 阅读"}</a>` : `<a class="btn read" disabled>预览不可用</a>`}
-    <a class="btn primary dl-link" href="${fileUrl(b.rel, "attachment")}" download="${txt(b.title)}.${b.ext.toLowerCase()}">⬇ 下载</a>
-    <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 阅读器检测中…</button>
-    <button class="btn convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 转 EPUB</button>
-    <button class="btn metalinkbtn" id="dMetaLink" title="粘贴豆瓣图书页链接，直接用该页面更新这本书的元数据">🔗 链接更新</button>
-    <button class="btn rematchbtn" id="dRematch" title="用修复后的匹配器重新查找这本书的豆瓣信息">🔄 重新匹配</button>
-    ${detailToggleHtml(rel)}
-    <button class="btn editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>`;
+    <div class="actgroup act-main">
+      ${canRead ? `<a class="btn read" href="${readUrl(b)}">${rec?.page ? "▶ 继续阅读" : "📖 阅读"}</a>` : `<a class="btn read" disabled>预览不可用</a>`}
+      <a class="btn primary dl-link" href="${fileUrl(b.rel, "attachment")}" download="${txt(b.title)}.${b.ext.toLowerCase()}">⬇ 下载</a>
+    </div>
+    <div class="actgroup act-send">
+      <button class="btn pushbtn" id="dPush" disabled title="检测阅读器连接中">📤 阅读器检测中…</button>
+      <select class="fmt hidden" id="dPushFormat" title="选择推送到阅读器的格式"></select>
+      <span class="acthint" id="dPushHint"></span>
+    </div>
+    <div class="actgroup act-shelf">
+      <span class="actlabel">书架</span>
+      ${detailToggleHtml(rel)}
+    </div>
+    <div class="actgroup act-tools">
+      <span class="actlabel">EPUB</span>
+      <button class="btn convertbtn" id="dConvert" title="把 PDF 转成可重排的 EPUB（文本版）">📄 转 EPUB</button>
+      <span class="badge2 hidden" id="dConvertedBadge"></span>
+      <button class="btn morebtn" id="dMore" aria-expanded="false" title="元数据修正 / 编辑等低频操作">⚙ 更多</button>
+      <span class="more-actions hidden" id="dMoreActions">
+        <button class="btn metalinkbtn" id="dMetaLink" title="粘贴豆瓣图书页链接，直接用该页面更新这本书的元数据">🔗 链接更新</button>
+        <button class="btn rematchbtn" id="dRematch" title="用修复后的匹配器重新查找这本书的豆瓣信息">🔄 重新匹配</button>
+        <button class="btn editbtn" title="修改书名 / 文件名 / 元数据">✏ 编辑</button>
+      </span>
+    </div>`;
   void refreshPushHint(rel);
+  void loadConvertedForDetail(rel);
 }
 
 async function openDetail(rel: string): Promise<void> {
@@ -2354,6 +2406,11 @@ async function boot(): Promise<void> {
     if (t.id === "dMetaLink") {
       metaLinkRel = detailRel;
       void openMetaLink();
+    }
+    if (t.id === "dMore") {
+      const more = document.getElementById("dMoreActions");
+      const open = more?.classList.toggle("hidden") === false;
+      (t as HTMLButtonElement).setAttribute("aria-expanded", open ? "true" : "false");
     }
     if (t.id === "dRematch") {
       const rel = detailRel;

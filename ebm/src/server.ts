@@ -27,7 +27,7 @@ import { restoreRejected, restoreStatus } from "./recoRestore";
 import { pathAliases, performRename, planRename, RenameLog, suggestFileName, undoRename } from "./rename";
 import { BookFile, LIBRARY_ROOT, LibraryScanner } from "./scanner";
 import { probeDevice, pushFile, pushTarget, setPushTarget } from "./push";
-import { convertToEpub, convertedAbs, findConverted } from "./convert";
+import { convertId, convertToEpub, convertedAbs, findConverted } from "./convert";
 import { auditMeta, parseDoubanId, rematchMeta, updateMetaByDouban } from "./metaLink";
 import { isShelfName, normPage, ShelfStore, validRel } from "./shelves";
 
@@ -673,6 +673,20 @@ app.post("/api/convert", async (c) => {
   } finally {
     release();
   }
+});
+
+// 按书查已转换的 EPUB（用于详情页"推送格式"选择）
+app.get("/api/converted", async (c) => {
+  const rel = c.req.query("rel") || "";
+  const abs = safeResolve(rel);
+  if (!abs) return json(c, { ok: false, error: "非法路径" }, 403);
+  const rec = await findConverted(convertId(abs));
+  return json(c, {
+    ok: true,
+    converted: rec
+      ? { id: rec.id, kind: rec.kind, chapters: rec.chapters, chars: rec.chars, sizeBytes: rec.sizeBytes, imagePages: rec.imagePages, createdAt: rec.createdAt }
+      : null,
+  });
 });
 
 // 下载转换产物（文件名用书名，UTF-8 filename* 兼容中文）
