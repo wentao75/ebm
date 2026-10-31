@@ -1637,10 +1637,14 @@ async function openDetail(rel: string): Promise<void> {
   rows.push(["数据位置", b.dataless ? "☁ iCloud 云端（首次打开自动取回）" : "本机（可直接阅读/下载）"]);
   rows.push(["文件时间", fmtDate(b.mtimeMs)]);
   if (rec?.page) rows.push(["阅读进度", `读到第 ${rec.page} 页`]);
+  // 两列网格：短内容两人一行；值较长（>26 字，如长原名/长出版社）时自动跨两列
   const renderRows = (extra: Array<[string, string]> = []) =>
     extra
       .concat(rows)
-      .map(([k, v]) => `<div class="drow"><span class="dk">${esc(k)}</span><span class="dv">${esc(v)}</span></div>`)
+      .map(([k, v]) => {
+        const wide = [...String(v)].length > 26 ? " wide" : "";
+        return `<div class="drow${wide}"><span class="dk">${esc(k)}</span><span class="dv">${esc(v)}</span></div>`;
+      })
       .join("");
   $("#dInfo").innerHTML = renderRows();
   $("#dChips").innerHTML = (b.tags || []).map((t) => `<span class="chip">${txt(t)}</span>`).join("");

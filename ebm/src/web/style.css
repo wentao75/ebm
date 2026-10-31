@@ -277,10 +277,12 @@ body {
 .dmain { flex: 1; min-width: 0; }
 .dmain h3 { margin: 0 26px 4px 0; font-size: 17px; line-height: 1.35; }
 .dauthor { color: var(--muted); font-size: 13px; margin-bottom: 8px; }
-.dinfo { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; }
-.drow { display: flex; gap: 10px; font-size: 12px; line-height: 1.42; }
-.drow .dk { flex: none; width: 66px; color: var(--muted); }
+.dinfo { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px 16px; margin-bottom: 8px; }
+.drow { display: flex; gap: 8px; font-size: 12px; line-height: 1.42; min-width: 0; }
+.drow.wide { grid-column: 1 / -1; }
+.drow .dk { flex: none; width: 56px; color: var(--muted); }
 .drow .dv { flex: 1; min-width: 0; word-break: break-word; }
+@media (max-width: 620px) { .dinfo { grid-template-columns: 1fr; } }
 .dmain .chips { margin-bottom: 8px; }
 .dmain .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
 .sbtn-wide { padding: 6px 10px; font-size: 12.5px; }

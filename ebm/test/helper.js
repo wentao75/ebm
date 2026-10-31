@@ -154,7 +154,14 @@ const META_FIXTURE = {
       "结尾包含 &hellip; 与 &mdash; 等命名实体。",
     tags: ["历史", "明朝", "&ldquo;通俗史&rdquo;"],
     douban: "9.1",
-    meta: { 书名: "明朝那些事儿", 出版社: "中国海关出版社", 出版日期: "2009-4", 页数: "320", 译者: "测试译者" },
+    meta: {
+      书名: "明朝那些事儿",
+      原名: "A Very Long Original Title That Should Span Two Columns In The Info Grid",
+      出版社: "中国海关出版社",
+      出版日期: "2009-4",
+      页数: "320",
+      译者: "测试译者",
+    },
     // 故意用"零换行压平"的真实形态（源数据 433 本全如此）+ 抓取垃圾，验证目录整理与清洗
     toc:
       "前 言 我如何走上这条路第一章 洪武大帝&ldquo;开局&rdquo;" +

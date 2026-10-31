@@ -568,6 +568,15 @@ async function main() {
       // 书架三态紧跟书名右侧（用户建议：与图书本身关联更直观）
       const shelfInTitle = await cdp.eval(`document.querySelectorAll('#dTitleShelf .sbtn-wide').length`);
       check("书架三态位于书名右侧", Number(shelfInTitle) === 3, `${shelfInTitle} 个`);
+
+      // 基本信息两列布局：长字段自动跨两列（不挤压、不浪费右侧空间）
+      const infoCols = await cdp.eval(`getComputedStyle(document.getElementById('dInfo')).gridTemplateColumns.split(' ').length`);
+      check("基本信息为两列布局", Number(infoCols) === 2, `${infoCols} 列`);
+      const wideInfo = await cdp.eval(`(() => {
+        const w = document.querySelector('#dInfo .drow.wide');
+        return w ? { text: w.textContent.trim().slice(0, 30), span: getComputedStyle(w).gridColumn } : null;
+      })()`);
+      check("长字段自动跨两列", !!wideInfo && String(wideInfo.span).includes("/"), wideInfo ? `${wideInfo.text} · gridColumn=${wideInfo.span}` : "未找到跨列行");
       await cdp.eval(`document.getElementById('dMore').click()`);
 
       // 已转换过的书：发送菜单里的 EPUB 项应标出"已转换"
