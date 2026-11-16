@@ -5,6 +5,41 @@
 
 ---
 
+## v1.16.1 · 修复公网 504 根因（Mac CPU 饱和 + EBM 扫描防抖）
+**2026-11-16**
+
+### 现象
+重启 DSH 后不到半小时，公网再次 **504 Gateway Time-out** ✗。
+
+### 逐层排查（本次不只看超时）
+| 层 | 结果 |
+|---|---|
+| EBM 本机服务 | 200，**4ms**，进程 CPU **6.5%** ✓ → **不是 EBM 的问题** |
+| ECS nginx | 活着；错误日志：`upstream timed out (110) while connecting to upstream`（间歇 ✗）|
+| ECS→Mac 上游（我发起）| **200 / 17ms** ✓（同一时刻正常 → 说明是**间歇性** ✗）|
+| Tailscale | 在线，`ping` 7ms ✓ |
+| **Mac 负载** | **load 9.95**，CPU 占用：**LogiOptionsPlus 98%** ✗ + **StorageManagement 128%+82%** ✗ + **iCloudDriveCore/bird 45%** ✗ + Chrome/SkyLight ~90% ✗ = **~350%** |
+
+### 根因
+1. **iCloud 同步风暴**：本次补做归档了 **497+8 个文件** → iCloudDriveCore/StorageManagement 持续高 CPU（**临时**，同步完成即回落）
+2. **LogiOptionsPlus 永久空转 98% CPU**（罗技 Options+ 已知 bug；杀掉即重生，12 个进程）
+3. EBM 的库扫描在**批量归档时连续全量重扫**（旧防抖仅 600ms ✗），每次 1315 个文件的 iCloud stat 又加剧 IO/CPU
+→ 三者叠加把 Mac 打满 ✗ → **Tailscale 收发包被饿死** ✗ → ECS→Mac 偶发 SYN 超时 → nginx 30s 超时 → **504** ✓
+
+### 修复
+- **EBM 扫描防抖加强**（`src/scanner.ts`）：600ms → **3s 防抖 + 最小间隔 10s**（批量归档只做有限次重扫）
+  - 新增 `test/scanner-debounce.test.js`：批量写 20 个文件 → 重扫次数 **≤3**（实测通过 ✓）
+- **每日任务增加公网自检**（`yabook_watch/run_daily.sh`）：跑完后探测 `https://ebm.drwen.cn/`，
+  非 200/401 时写日志 + **macOS 通知告警**
+- 已重启 Logi 相关进程（仍会重生，**建议升级/退出罗技 Options+**，详见 RUNBOOK）
+
+### 验证
+- `npm test` **122/122** ✓（含新增防抖测试）
+- 部署后公网连续 5 次：**200 / 50~70ms** ✓；本机服务 4ms ✓
+- 待 iCloud 同步完成后负载应回落；Logi 空转需用户在应用侧处理
+
+---
+
 ## v1.16.0 · 修复：每日巡检自 11-13 后不再执行（调度插件未激活）
 **2026-11-16**
 

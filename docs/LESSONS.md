@@ -143,3 +143,11 @@
 ## #21 · nginx `proxy_connect_timeout` 不可设得过短（2026-11-16）
 把 connect 超时设成 5s 后，主机高负载（load 8+）时 TCP 建连偶发 >5s → 公网 **504 Gateway Time-out**。
 **对策**：5s 只适合"上游确定离线"场景；常态代理用 **30s** 更稳（`proxy_read_timeout` 仍按需放大）。
+
+## #22 · 公网 504 不一定是服务问题：先看主机 CPU 饱和度（2026-11-16）
+现象：`https://ebm.drwen.cn` 间歇 504；但本机 EBM `/api/health` 200/4ms、ECS→Mac 直连 200/17ms、Tailscale ping 7ms。
+根因：Mac 被无关进程打满（LogiOptionsPlus 98% + iCloud StorageManagement 210% + Chrome/SkyLight 90%），
+**Tailscale 收发包被饿死** → nginx 连上游 SYN 超时 → 504。
+排查顺序：① 本机服务 ② ECS 错误日志（区分 while connecting / while reading）③ ECS→上游直连 ④ **Mac `uptime` + `ps aux | sort -nrk 3`**。
+对策：先降载（停 LogiOptionsPlus / 等 iCloud 同步完 / 关 Chrome 标签），再谈调超时；
+工程侧：批量文件变更要防抖（EBM 扫描 600ms→3s+最小间隔 10s），避免 iCloud stat 风暴。

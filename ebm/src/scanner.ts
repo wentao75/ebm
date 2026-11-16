@@ -9,6 +9,10 @@ import path from "path";
 import { LIBRARY_ROOT } from "./paths";
 export { LIBRARY_ROOT };
 
+/** 书库变更重扫：防抖 3s + 最小间隔 10s（批量归档时 coalesce） */
+const SCAN_DEBOUNCE_MS = 3000;
+const SCAN_MIN_INTERVAL_MS = 10_000;
+
 /** 支持的电子书扩展名 */
 const EXTS = new Set([".pdf", ".epub", ".mobi", ".azw3", ".djvu", ".txt"]);
 
@@ -117,15 +121,23 @@ export class LibraryScanner extends EventEmitter {
     }
   }
 
+  private lastScanAt = 0;
+
+  /** 防抖 + 最小间隔：批量归档（几十上百个文件）时只做有限次重扫，避免连环全量扫描（2026-11-16） */
   private scheduleRescan(): void {
+    const wait = Math.max(
+      SCAN_DEBOUNCE_MS,
+      this.lastScanAt + SCAN_MIN_INTERVAL_MS - Date.now(),
+    );
     if (this.debouceTimer) clearTimeout(this.debouceTimer);
     this.debouceTimer = setTimeout(() => {
       this.debouceTimer = null;
       void this.rescan();
-    }, 600);
+    }, wait);
   }
 
   private async rescan(): Promise<void> {
+    this.lastScanAt = Date.now();
     if (this.scanning) {
       this.rescanPending = true;
       return;
