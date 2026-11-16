@@ -33,6 +33,10 @@
 - 干跑链路：`auto_tier` 无新增 · `pending_t1` 输出 9 个 id ✓
 - 看板日程 confirmed `enabled:false` ✓
 
+### 下载限次（防 504）
+`run_daily.sh` 每天最多下载 **5 本**（`EBM_MAX_DOWNLOADS` 可调），剩余次日继续——避免白天大批量下载挤占带宽
+（今日实测：一次拉 2GB 会导致公网约 15 分钟 504 ✗）。当前待下载 **9 本** → 明天 5 本、后天 4 本。
+
 ### 日常使用说明
 - 你在「待下载确认」里的勾选照旧生效（EBM 写入 tiers → 次日 09:00 的 apply 阶段落地）✓
 - 想立刻跑一次：`launchctl kickstart -k gui/$(id -u)/com.ebm.daily`
