@@ -939,14 +939,25 @@ async function main(): Promise<void> {
     /* ignore */
   }
 
-// 重要文件常驻本地：iCloud 可能把它们"驱逐"成占位符（blocks=0），导致读取失败/变慢。
-// 启动时 + 每小时触发一次取回（小文件，代价极低）。2026-11-16
-const KEEP_LOCAL_FILES = ["_推荐待确认.md", "书库索引.md", "library.html"];
+// 重要文件 + 常驻名单：iCloud 可能把它们"驱逐"成占位符（blocks=0），导致读取失败/变慢。
+// 固定三个元数据/目录文件 + keep_local.txt（在读 + 近 7 天新书，由管道每日生成）。
+// 启动时 + 每小时触发一次取回（小文件代价低；书籍按需排队，最多并发 3）。2026-11-16
+const FIXED_KEEP_LOCAL = ["_推荐待确认.md", "书库索引.md", "library.html"];
 const keepLocalFiles = (): void => {
-  for (const rel of KEEP_LOCAL_FILES) {
-    const abs = path.join(LIBRARY_ROOT, rel);
+  const list: string[] = [...FIXED_KEEP_LOCAL];
+  try {
+    const txt = fs.readFileSync(path.join(WATCH_DIR, "keep_local.txt"), "utf-8");
+    for (const line of txt.split("\n")) {
+      const rel = line.split("\t")[0].trim();
+      if (!rel || rel.startsWith("#")) continue;
+      list.push(rel);
+    }
+  } catch {
+    /* 名单文件不存在：只保固定文件 */
+  }
+  for (const rel of list) {
     try {
-      requestMaterialize(abs);
+      requestMaterialize(path.join(LIBRARY_ROOT, rel));
     } catch {
       /* 文件不存在等忽略 */
     }

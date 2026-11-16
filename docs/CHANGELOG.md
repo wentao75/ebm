@@ -5,6 +5,37 @@
 
 ---
 
+## v1.16.5 · 常驻本地机制（A+B：在读 + 近 7 天新书）
+**2026-11-16 13:35**
+
+### 用户选择
+"需要常驻哪些文件" → 确认方案 **A（在读书架）+ B（近 7 天新书）**。
+
+### 实现
+| 组件 | 作用 |
+|---|---|
+| `yabook_watch/gen_keep_local.py` | 按规则生成名单：`reading=true` 的书 + 近 N 天（默认 7）入库的书 → `keep_local.txt`（带原因注释、按时间排序）|
+| `yabook_watch/keep_local.txt` | 自动生成名单（**勿手改**）|
+| `yabook_watch/keep_local_extra.txt` | **手工追加**名单（不会被覆盖，供你按需 pin 单本）|
+| `yabook_watch/keep_local.sh` | 逐个 `brctl download` + 校验 `blocks>0`；已本地的跳过（增量）；顺序执行不抢 IO |
+| `run_daily.sh` | 每日巡检时先 `gen_keep_local.py` 再 `keep_local.sh`（自动跟随"在读/新书"变化）|
+| `ebm/src/server.ts` | 启动 + **每小时**读取 `keep_local.txt` 并对名单文件 `requestMaterialize` 兜底（iCloud 若再次驱逐会被拉回）|
+
+### 实测（首次全量拉取）
+```
+已生成 keep_local.txt: 59 本 · 合计 2.06GB
+keep-local 完成：本地/新拉 32 · 失败 0 · 已本地跳过 30
+名单内实际本地: 59 / 59 本（2.06GB）· 仍在云端 0
+```
+- 公网同期 200（0.23s）✓；负载 7.6（拉取结束后回落）✓
+- 增量特性：日后只有被 iCloud 驱逐的文件才会重新拉取（几十 MB 级别），成本极低 ✓
+
+### 说明
+- 书籍**总体仍按需取回**（1315 本 24.7GB；常驻的 59 本占 8%）✓
+- 想调整规则：`gen_keep_local.py --days N`；想额外 pin 单本：往 `keep_local_extra.txt` 加一行
+
+---
+
 ## v1.16.4 · 修复「下载报错」：云端书返回 202 JSON + 重要文件常驻本地
 **2026-11-16 13:30**
 
