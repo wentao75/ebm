@@ -5,6 +5,27 @@
 
 ---
 
+## v1.16.3 · 确认：LogiOptions+ 已彻底停用，504 消除
+**2026-11-16 13:20**
+
+### 用户操作后核验
+| 检查 | 结果 |
+|---|---|
+| Logi 进程 | **0 个** ✅（含 root 属主的 `logioptionsplus_updater`）|
+| `launchctl` 加载 | `com.logi.cp-dev-mgr` / `com.logi.optionsplus.updater` **均未加载** ✅ |
+| `print-disabled` | 两项均 **disabled** ✅（该状态**重启后仍保持**）|
+| 系统负载 | **9.95 → 3.70~7.40**（剩余为 Chrome / WindowServer / SkyLight，属正常使用）✅ |
+| 公网 soak（30 秒 10 次）| **10/10 = 200**（58~66ms）✅ |
+| ECS 上游超时 | **12:35 之后 0 次** ✅ |
+| EBM 服务 | pid 68882，runs=12，**last exit 0**（12:50 部署时的正常重启，非崩溃）；书库 1315 本 ✓ |
+
+### 备注
+- 停用 LogiOptions+ 后：鼠标**基础功能正常**，仅**自定义按键/手势失效**；日后需要时先升级 Logi Options+，
+  再到「系统设置 → 通用 → 登录项与扩展 → 允许在后台」重新打开
+- 当前 Top CPU 为 Chrome（47%）+ WindowServer（47%），属日常使用，无需处理
+
+---
+
 ## v1.16.2 · 504 收尾：锁定 root 级 CPU 黑洞 + 稳定性验证
 **2026-11-16 13:10**
 
