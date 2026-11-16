@@ -5,6 +5,44 @@
 
 ---
 
+## v1.16.0 · 修复：每日巡检自 11-13 后不再执行（调度插件未激活）
+**2026-11-16**
+
+### 现象
+用户发现「每日定时任务」13 号之后就没再跑（书库 11-14/15/16 无新书）。
+
+### 排查
+1. 备份任务正常 ✓（restic 11-12~16 每天 03:30 有快照）
+2. 雅书巡检产物停在 **11-13 09:28** ✗；系统里**没有任何 launchd/cron 调度它** ✗
+3. 用户指出调度在 **DSH 任务看板** → 看板卡片 `📚 雅书每日巡检与自动下载` cron `43 8 * * *`：
+   `enabled=true` 但 **`nextRunAt` 停在 11-14 08:43（已过期）** ✗，`lastTriggeredAt=11-13 08:43` ✗
+4. `~/.dsh/logs/web-service.err.log` 决定性证据：
+   `dsh: startup failed: 1 required plugin did not activate` /
+   `cannot get property "webRuntime" without inject` /
+   `Plugins waiting for services: schedule → sessionController → fileUploads → connection`
+   → **DSH 调度插件未激活**，看板 cron 不再触发 ✗
+
+### 处理
+- `task_board_schedule` 重新 enabled → `nextRunAt` 刷新为 **11-17 08:43** ✓
+- **立即补跑**（手工执行 prep→download→finish）：下载 **4 本新书**、补元数据 **54 本**、
+  staging 归档完成、书库 **1303 → 1307** 本 ✓
+- 新增 **第二层兜底调度**：`~/Library/LaunchAgents/com.ebm.daily.plist` → 每天 **09:00** 跑
+  `yabook_watch/run_daily.sh`（prep→download→finish，**含"今天 08 点后已跑过则跳过"守卫**），
+  避免主调度再次静默失效
+- 顺带修复 **504**：`proxy_connect_timeout` 5s → **30s**（Mac 高负载 load 8+ 时 TCP 建连超 5s 导致 504）
+
+### 遗留
+- DSH Web 主机需**重启一次**（`launchctl kickstart -k gui/$(id -u)/com.dsh.web`）才能让 `schedule` 插件重新激活；
+  未重启前看板仍可能不触发，但 09:00 兜底会接住 ✓
+- 今日先抓到的 **19 篇新帖待分级**：T1 已下载归档；待定项需在看板卡片跑一次（AI 分档）或人工在
+  EBM「待下载确认」里处理
+
+### 教训（已写入 LESSONS #20/#21）
+- `launchctl bootout` 会连带 TERM 正在运行任务的子进程（曾打断 finish）
+- `proxy_connect_timeout` 不应设 5s（高负载下 504）
+
+---
+
 ## v1.15.1 · 修复公网入口 503（并发连接上限把已认证用户挡了）
 **2026-11-16**
 

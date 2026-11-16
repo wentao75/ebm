@@ -133,3 +133,13 @@
 - 轮询里比较 mtime，只有真变了才重建索引，避免目录里其它文件（日志/报告）频繁触发。
 
 **通用教训**：凡是"别人原子写、我监听变化"的集成点，都不能只 watch 文件；同一类陷阱还出现在 `.tmp` 中间文件的噪声事件上（要按文件名过滤）。
+
+## #20 · `launchctl bootout` 会连带 TERM 任务子进程（2026-11-16）
+改 plist 后用 `bootout`+`bootstrap` 重新加载时，如果该任务正在运行，**子进程会被一起杀掉**：
+当日巡检 `daily_finish.py` 运行中被 bootout → finish 阶段中断（staging 已空但收尾只做了一半）。
+**对策**：① 改调度前先确认无运行中任务（`pgrep -f run_daily.sh`）；② 需要中断时优先等其自然结束；
+③ 长时间任务用独立 `nohup`/后台进程启动，与 launchd 生命周期解耦。
+
+## #21 · nginx `proxy_connect_timeout` 不可设得过短（2026-11-16）
+把 connect 超时设成 5s 后，主机高负载（load 8+）时 TCP 建连偶发 >5s → 公网 **504 Gateway Time-out**。
+**对策**：5s 只适合"上游确定离线"场景；常态代理用 **30s** 更稳（`proxy_read_timeout` 仍按需放大）。
