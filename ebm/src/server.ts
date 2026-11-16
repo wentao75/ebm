@@ -170,6 +170,9 @@ function rfc5987(name: string): string {
     .replace(/\*/g, "%2A");
 }
 
+/** 下载/阅读时等待 iCloud 取回的上限（大 PDF 首次取回可能要几分钟） */
+const FILE_MATERIALIZE_WAIT_MS = 180_000;
+
 app.get("/api/file", async (c) => {
   const rel = c.req.query("path") || "";
   const disp = c.req.query("disp") === "inline" ? "inline" : "attachment";
@@ -182,13 +185,22 @@ app.get("/api/file", async (c) => {
   } catch {
     return c.text("文件不存在（可能 iCloud 未下载或已被移动）", 404);
   }
-  // —— iCloud dataless 兜底（策略 A）：数据在云端 → 触发取回并返回 202 ——
+  // —— iCloud dataless 兜底（策略 A）：数据在云端 → 触发取回，**等取回完成再返回文件** ——
+  // 2026-11-16 修复：原先直接返回 202+JSON，浏览器「⬇ 下载」是普通链接，拿到 JSON 即报错/失败。
   if (isDataless(st)) {
-    const status = requestMaterialize(abs);
-    return c.json(
-      { materializing: true, status, rel, title: path.basename(abs), hint: "数据在 iCloud 云端，取回后自动重试（首次打开需等待）" },
-      202,
-    );
+    requestMaterialize(abs);
+    const deadline = Date.now() + FILE_MATERIALIZE_WAIT_MS;
+    while (Date.now() + 1500 <= deadline) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const now = await fsp.stat(abs).catch(() => null);
+      if (now && !isDataless(now)) {
+        st = now;
+        break;
+      }
+    }
+    if (isDataless(st)) {
+      return c.text("文件仍在从 iCloud 取回（首次下载大文件可能需要几分钟），请稍后再次点击下载", 504);
+    }
   }
   const name = path.basename(abs);
   const type = mimeOf(path.extname(name).toLowerCase());
@@ -926,6 +938,23 @@ async function main(): Promise<void> {
   } catch {
     /* ignore */
   }
+
+// 重要文件常驻本地：iCloud 可能把它们"驱逐"成占位符（blocks=0），导致读取失败/变慢。
+// 启动时 + 每小时触发一次取回（小文件，代价极低）。2026-11-16
+const KEEP_LOCAL_FILES = ["_推荐待确认.md", "书库索引.md", "library.html"];
+const keepLocalFiles = (): void => {
+  for (const rel of KEEP_LOCAL_FILES) {
+    const abs = path.join(LIBRARY_ROOT, rel);
+    try {
+      requestMaterialize(abs);
+    } catch {
+      /* 文件不存在等忽略 */
+    }
+  }
+};
+keepLocalFiles();
+setInterval(keepLocalFiles, 60 * 60 * 1000).unref?.();
+
 
   serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
     console.log(`[ebm] listening on http://${HOST}:${PORT}  (局域网/内网可直连同一端口)`);
