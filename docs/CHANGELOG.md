@@ -5,6 +5,31 @@
 
 ---
 
+## v1.16.2 · 504 收尾：锁定 root 级 CPU 黑洞 + 稳定性验证
+**2026-11-16 13:10**
+
+### 进一步定位（用户执行方案 A 失败后）
+- 用户执行 `sudo launchctl bootout gui/$(id -u)/com.logi.optionsplus` → **Boot-out failed: 3: No such process**
+  （该 label 实际是 `com.logi.cp-dev-mgr`；占 CPU 的是 **`logioptionsplus_updater`**）
+- `ps -o user` 显示：**占用 97% CPU 的更新器属主是 root** ✗ → 这就是为什么 gui 域 bootout 与普通 `renice` 都失败
+  （bootout 报 No such process、renice 报失败 → 因为不在用户域、且非本人进程）
+
+### 结论与处置
+- 需 **sudo** 或图形界面停用（详见 RUNBOOK「Mac CPU 黑洞排查」）：
+  `sudo launchctl bootout|disable system/com.logi.optionsplus.updater` + `sudo pkill -9 -f logioptionsplus_updater`
+  或 **系统设置 → 通用 → 登录项与扩展 →「允许在后台」→ 关闭 Logitech**
+- iCloud 的 `StorageManagement`/`ApplicationsStorageExtension`（~120-200%）属**同步临时高峰**，等其完成即回落
+
+### 稳定性验证（修复后）
+| 时段 | 上游超时（504）次数 |
+|---|---|
+| 11 点 | **107 次** ✗ |
+| 12 点 | **6 次** |
+| **12:35 之后** | **0 次** ✅ |
+- 公网连续 6 次 200（56~66ms）✓；本机 200（1ms）✓；负载由 9.95 降至 ~7.6 ✓
+
+---
+
 ## v1.16.1 · 修复公网 504 根因（Mac CPU 饱和 + EBM 扫描防抖）
 **2026-11-16**
 

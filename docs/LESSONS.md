@@ -151,3 +151,8 @@
 排查顺序：① 本机服务 ② ECS 错误日志（区分 while connecting / while reading）③ ECS→上游直连 ④ **Mac `uptime` + `ps aux | sort -nrk 3`**。
 对策：先降载（停 LogiOptionsPlus / 等 iCloud 同步完 / 关 Chrome 标签），再谈调超时；
 工程侧：批量文件变更要防抖（EBM 扫描 600ms→3s+最小间隔 10s），避免 iCloud stat 风暴。
+
+补充（同日晚补测）：LogiOptions+ 的**更新器**（`logioptionsplus_updater`）以 **root** 运行，
+`launchctl bootout gui/501/...` 会报 “No such process”、普通 `renice` 也会失败——必须 `sudo` 或走
+「系统设置 → 通用 → 登录项与扩展 → 允许在后台」关闭。自检文件 `~/.dsh/task-board/scheduler-v2.json`
+的 `lastTickAt` 与 `ps aux | sort -nrk 3` 应成为 504 排查的固定两步。
