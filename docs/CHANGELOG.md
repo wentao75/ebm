@@ -5,6 +5,47 @@
 
 ---
 
+## v1.18.0 · 每日巡检 = launchd 定时 + DSH Agent 判断（保留 AI 分级）
+**2026-11-16 14:05**
+
+### 需求
+保留**大模型 Agent 判断**（非纯规则），但看板调度器不可靠 ✗ → 找"DSH 能执行且稳定"的模式。
+
+### 方案：launchd 定时触发 `dsh --profile headless`（一次性 Agent 会话）
+```
+launchd com.ebm.daily（每天 09:00）
+  └─ yabook_watch/daily_agent.sh
+       ├─ 从 ~/.dsh/.credentials.yaml 取 DEEPSEEK_API_KEY（不打印、不落盘）
+       ├─ dsh --profile headless "<完整巡检指令>"（24 分钟超时保护）
+       │    Agent 按 DAILY_RUNBOOK：apply(勾选) → prep(巡检) → **AI 判断分级** → download(≤5 本) → finish
+       └─ Agent 失败/超时 → 自动回退 run_daily.sh（规则分级，保证每日不空跑）
+```
+
+### 实测验证
+| 项 | 结果 |
+|---|---|
+| `dsh headless` 基本运行 | 「只回复四个字」→ 输出"巡检可用" · rc=0 ✓ |
+| headless 写文件 | write 工具创建文件成功 ✓（workspace-write 足够，可改 tiers.json）|
+| 凭据 | `~/.dsh/.credentials.yaml` 的 `refs.DEEPSEEK_API_KEY` 是真实 sk- 密钥（35 位）✓，脚本读取不打印 ✓ |
+| Agent 执行命令 | 在 ebooks 下跑 `pending_t1.py` → 返回真实 JSON（9 本待下载）✓ |
+| 看板日程 | 保持 `enabled=false` ✓（避免双跑）；卡片仍可手动 run 做人工复核 ✓ |
+
+### 对比
+| | 看板卡片 | **launchd + headless（新）** |
+|---|---|---|
+| 定时可靠性 | 差（tick 僵死、过期不自恢复 ✗）| **好（macOS 原生，重启自恢复）** ✓ |
+| Agent 判断 | 有 ✓ | **有** ✓ |
+| 依赖 GUI 会话 | 需要 Web 主机 ✓ | **完全独立** ✓ |
+| 失败兜底 | 无 | **自动回退规则链路** ✓ |
+| 日志 | 会话记录 | `yabook_watch/daily_agent_MMDD.log` ✓ |
+
+### 使用
+- 自动：每天 **09:00**（`com.ebm.daily`）
+- 手动：`bash yabook_watch/daily_agent.sh`
+- 只看建议不落地：`dsh --profile headless "按 DAILY_RUNBOOK 对当前待分级帖给建议，不要写文件"`
+
+---
+
 ## v1.17.0 · 调度改为 launchd 全自动（不再依赖 DSH 看板）
 **2026-11-16 13:55**
 
