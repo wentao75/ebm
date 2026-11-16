@@ -5,6 +5,41 @@
 
 ---
 
+## v1.15.1 · 修复公网入口 503（并发连接上限把已认证用户挡了）
+**2026-11-16**
+
+### 现象
+用户打开 `ebm.drwen.cn` 报 **503**，页面无法连接。
+
+### 排查与根因
+1. 本机服务正常（`/api/health` 200、pid 80155、Tailscale 在线、6722 监听）✓
+2. 公网返回 401（nginx 活着）✓；ECS → 上游 `100.71.251.38:6722` 200（24ms）✓
+3. **nginx 错误日志**（决定性）：
+   - `10:58:09 limiting connections by zone "ebm_conn"` ×2
+   - `10:58:22 … request: "GET /"` ← 首页也被挡
+   - referrer 显示用户当时在 **`/read?path=…力量训练基础….pdf`** 阅读器页
+   → **`limit_conn ebm_conn 16`（每 IP 16 并发）被 PDF.js 的并发取块/封面请求打满**，nginx 对**已认证用户**也返回 503 ✗
+
+### 修复（ECS nginx，已生效）
+- `limit_conn ebm_conn` **16 → 128**：真实浏览器/阅读器远不会触及；并行爆破仍由 `limit_req` 拦住（匿名 429）
+- 反代新增 **`proxy_connect_timeout 5s`**：上游（Mac/Tailscale）不可达时快速失败，不再让浏览器干等 60s
+- 配置文件已同步回仓库（`ebm/deploy/ecs-nginx.conf` / `ecs-proxy.inc.conf`），ECS 侧已备份 `*.bak-20261116-110014`
+
+### 验证
+| 项 | 结果 |
+|---|---|
+| 认证用户并发 40 | **全部 200** ✓ |
+| 认证用户并发 80 | **全部 200** ✓（修复前 16 就 503）|
+| 匿名并发 40 | 401/429 混合 ✓（限流仍有效，真实用户不受影响）|
+| 认证首页 / `/api/health` | 200 ✓（0.19s）|
+| Mac 睡眠 | `sleep 0` 已禁用，上游不会因睡眠掉线 ✓ |
+
+### 运维提示
+- 若再遇 503：先看 ECS `tail /var/log/nginx/error.log`——`limiting connections` = 并发上限；`connect() failed` = Mac/Tailscale 不可达（检查 Mac 是否在线、Tailscale 是否 up）
+- 站点证书 `*.drwen.cn` **2026-11-08 已过期**（本次未处理，需续期后 ECS reload）
+
+---
+
 ## v1.15.0 · 基本信息改两列自适应布局（左侧空白收敛）
 **2026-10-31**
 
