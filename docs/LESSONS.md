@@ -156,3 +156,11 @@
 `launchctl bootout gui/501/...` 会报 “No such process”、普通 `renice` 也会失败——必须 `sudo` 或走
 「系统设置 → 通用 → 登录项与扩展 → 允许在后台」关闭。自检文件 `~/.dsh/task-board/scheduler-v2.json`
 的 `lastTickAt` 与 `ps aux | sort -nrk 3` 应成为 504 排查的固定两步。
+
+## #23 · iCloud 批量取回会挤掉 Tailscale，导致公网 504（2026-11-16）
+第三次 504 的根因与前两次不同：**不是 CPU**（当时 load 仅 6.6、Logi 已停用），而是
+`brctl download` **批量拉 2GB（32 个文件）** 占满带宽/IO → Tailscale 的 UDP 通道被挤掉 →
+ECS→Mac SYN 超时 → nginx `upstream timed out while connecting` → 504。
+504 时间点（13:17/13:19/13:28/13:30）与拉取时段完全重合；拉完即恢复（200/17ms）。
+**对策**：① 批量取回限速（`keep_local.sh` 默认 8 个/600MB）并放到凌晨 02:00（`com.ebm.keep-local`）；
+② 白天只允许"按需单本取回"；③ 任何"一次拉大量 iCloud 文件"的操作都要先问"现在是白天吗"。

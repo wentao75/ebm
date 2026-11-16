@@ -939,23 +939,12 @@ async function main(): Promise<void> {
     /* ignore */
   }
 
-// 重要文件 + 常驻名单：iCloud 可能把它们"驱逐"成占位符（blocks=0），导致读取失败/变慢。
-// 固定三个元数据/目录文件 + keep_local.txt（在读 + 近 7 天新书，由管道每日生成）。
-// 启动时 + 每小时触发一次取回（小文件代价低；书籍按需排队，最多并发 3）。2026-11-16
+// 重要元数据文件常驻本地：iCloud 可能把它们"驱逐"成占位符（blocks=0），导致读取失败/变慢。
+// 只保这 3 个小文件（每小时，代价极低）；**书籍名单**的批量取回交给凌晨 02:00 的
+// com.ebm.keep-local（限速 8 本/600MB）——白天大流量 iCloud 下载会挤占带宽导致公网 504。2026-11-16
 const FIXED_KEEP_LOCAL = ["_推荐待确认.md", "书库索引.md", "library.html"];
 const keepLocalFiles = (): void => {
-  const list: string[] = [...FIXED_KEEP_LOCAL];
-  try {
-    const txt = fs.readFileSync(path.join(WATCH_DIR, "keep_local.txt"), "utf-8");
-    for (const line of txt.split("\n")) {
-      const rel = line.split("\t")[0].trim();
-      if (!rel || rel.startsWith("#")) continue;
-      list.push(rel);
-    }
-  } catch {
-    /* 名单文件不存在：只保固定文件 */
-  }
-  for (const rel of list) {
+  for (const rel of FIXED_KEEP_LOCAL) {
     try {
       requestMaterialize(path.join(LIBRARY_ROOT, rel));
     } catch {
