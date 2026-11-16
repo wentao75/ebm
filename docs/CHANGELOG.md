@@ -5,6 +5,36 @@
 
 ---
 
+## v1.18.1 · Agent 巡检实跑验证通过 + 看板卡片归档
+**2026-11-16 14:10**
+
+### 首跑遇到并解决的权限问题
+- 首次运行 Agent 时撞到 **沙箱限制** ✗：headless profile 默认 `workspace-write`，**写不进 iCloud 书库**
+- 修复：给 `~/.dsh/profiles/headless/cordis.patch.yml` 加 `permission` 预设，`defaultPreset: danger-full-access`
+  （与看板卡片一致；无人值守 → `approval: never`）
+- 验证：Agent 成功在 iCloud 写入测试文件 ✓
+
+### 实跑结果（14:02:21 → 14:04:39，rc=0，2.3 分钟）
+| 步骤 | 结果 |
+|---|---|
+| recommend.py apply | 无新勾选 ✓ |
+| daily_prep | 0 篇待分级（今天上午已处理）✓ |
+| **AI 分级判断** | 复核历史 T2/T1，识别出 2 本"用户已批准但未记账"（23651、23653）→ 按已存在记账 ✓ |
+| 下载 | **3 本入库**：23655《人类尸体的奇异生活》23656《蒙古帝国与其漫长的后世》23658《认知黑洞》 ✓（≤5 本 ✓）|
+| 收尾 daily_finish | 待分级 0 · T1 待下 0 · staging 空 · last_scan=今天 · 清单已刷新 ✓ |
+| 约束遵守 | **未做任何 iCloud 批量取回** ✓（避免 504） |
+| 书库 | 1315 → **1318 本** ✓ |
+| 跳过（T3）| 23657《新青瓷》23659《Codex提效手册》23660《认知资本》（用户已拒绝）✓ |
+
+### 看板
+- 卡片「📚 雅书每日巡检与自动下载」已 **archive**（归档，可 restore）✓
+- 看板当前无活动任务；`com.ebm.daily`（launchd）成为唯一调度 ✓
+
+### 顺手修正
+- `pending_t1.py` 排除 `state.unavailable`（无下载通道的历史遗留：6 本），避免"T1 队列未清空"的误报 ✓
+
+---
+
 ## v1.18.0 · 每日巡检 = launchd 定时 + DSH Agent 判断（保留 AI 分级）
 **2026-11-16 14:05**
 
