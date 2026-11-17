@@ -164,3 +164,11 @@ ECS→Mac SYN 超时 → nginx `upstream timed out while connecting` → 504。
 504 时间点（13:17/13:19/13:28/13:30）与拉取时段完全重合；拉完即恢复（200/17ms）。
 **对策**：① 批量取回限速（`keep_local.sh` 默认 8 个/600MB）并放到凌晨 02:00（`com.ebm.keep-local`）；
 ② 白天只允许"按需单本取回"；③ 任何"一次拉大量 iCloud 文件"的操作都要先问"现在是白天吗"。
+
+## #24 · launchd 环境下 `dsh` rc=127（PATH 缺 nvm node）（2026-11-17）
+现象：09:00 的 Agent 巡检日志只有 174 字节：`env: node: No such file or directory`、`agent end rc=127`。
+根因：`dsh` 的 shebang 是 `#!/usr/bin/env node`，launchd 的默认 PATH（/opt/homebrew/bin:/usr/bin:…）
+**不含 nvm 的 node** ✗。
+对策：① plist 的 `EnvironmentVariables.PATH` 显式加 `~/.nvm/versions/node/<ver>/bin`；
+② 脚本里再动态 `NODE_BIN=$(ls -d ~/.nvm/versions/node/*/bin | tail -1)` 兜底。
+教训：**launchd 任务调用的任何 node 脚本/CLI 都要在 plist 或脚本里显式补 PATH**，并检查日志首行是否有 env 报错。
