@@ -5,6 +5,45 @@
 
 ---
 
+## v1.18.4 · 504 根治（nginx 侧）：上游失败重试 + keepalive
+**2026-11-18 09:56**
+
+### 第四次 504 的现场
+- 本机服务 200/6ms ✓；ECS→Mac **5/5 200（17-25ms）** ✓
+- 但 **我 SSH 到 ECS 也超时了一次** ✗ —— 说明**Mac 出方向 Tailscale 也在丢包** ✓（与用户浏览器同源）
+- Mac load **9.5**：WindowServer 50% + Chrome 47% + **FileProvider 37% + CloudKitDaemon 19% + iCloudDriveCore 19%** ✗
+→ 结论：**iCloud 同步突发**（当天新增 5 本 + 我测试拉取 139MB/6MB 引发）把 Mac 网络打满 ✗ → Tailscale 偶发丢 SYN ✗ → nginx 等不到上游 → **504** ✓
+
+### 修复（nginx 层，不再依赖 Mac 侧"恰好不丢包"）
+```nginx
+upstream ebm_backend { server 100.71.251.38:6722 max_fails=0; keepalive 32; }
+
+proxy_pass http://ebm_backend;
+proxy_set_header Connection "";
+proxy_connect_timeout 10s;          # 单次建连上限（丢包快速失败）
+proxy_next_upstream error timeout http_502 http_503 http_504;
+proxy_next_upstream_tries 3;        # 丢一次 SYN 就重试，最多 3 次
+proxy_next_upstream_timeout 30s;
+```
+- **keepalive 32**：减少握手次数（每次握手都是一次可能丢包的 SYN）
+- **失败重试**：把"丢包 → 504"变成"丢包 → 重试 → 通常成功"
+
+### 验证（iCloud 仍在同步、load 9.9 的情况下）
+- 公网连续 **8/8 = 200** ✓
+- **并发 20 = 全部 200** ✓
+- `nginx -T` 确认 upstream/retry 已生效 ✓
+- 备份：`ebm.drwen.cn.conf.bak-20261118-095600` / `ebm_proxy.inc.bak-20261118-095600` ✓
+
+### 经验
+**504 的四种成因（按出现顺序）**：
+1. Conntrack/并发上限（`limit_conn 16` → 128）✓ v1.15.1
+2. connect 超时过短（5s → 30s → 10s+重试）✓ v1.16.1/1.16.6
+3. 批量 iCloud 取回挤占带宽（→ 限速 + 夜间）✓ v1.16.6
+4. **上游偶发丢包**（→ nginx 重试 + keepalive）✓ **本次**
+→ 现在无论 Mac 侧短时抖动，公网都能靠重试恢复 ✓
+
+---
+
 ## v1.18.3 · 常驻拉取夜间加固 + 11-18 自动任务确认正常
 **2026-11-18 10:00**
 
