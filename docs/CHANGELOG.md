@@ -5,6 +5,55 @@
 
 ---
 
+## v1.19.0 · EBM 迁移到 macmini2018（旧机转待命）
+**2026-11-18 13:25**
+
+### 背景
+旧机（minim4）负载长期 7~10（iCloud 同步 + 各类应用），公网 504 多由此引发。
+用户决定：把 EBM 整体迁到 **macmini2018**（Tailscale `100.85.233.24`，同局域网 `192.168.3.65`，负载约 3）。
+
+### 迁移内容
+| 项 | 结果 |
+|---|---|
+| 环境 | nvm + **Node v24.22.3** ✓ · 系统 **Python 3.9.6** + venv + **PyMuPDF 1.26.5** ✓（无需 Homebrew/sudo）|
+| DSH | **0.2.2-rc.1**（最新）✓ + headless profile + 凭据 ✓（旧机为 0.2.1-rc.5，用户稍后升级）|
+| 代码 | `ebm`（rsync，含 .git）✓ · `yabook_watch` ✓ |
+| 数据 | `ebm/data`(35M) · `ebm/covers`(119M→1550 个缓存) · `yabook_watch`(44M) ✓ |
+| 书库 | iCloud Drive 同账号，已同步（1322→**1326** 本，内容按需取回）✓ |
+| 服务 | `com.ebm.server`（launchd，6722）✓ |
+| 定时任务 | `com.ebm.daily`(09:00 Agent) · `com.ebm.keep-local`(02:00) · `com.ebm.backup`(03:30, restic 0.17.3 amd64) ✓ |
+| ECS 入口 | upstream → **100.85.233.24:6722**（备份 `ebm.drwen.cn.conf.bak-20261118-130315`）✓ |
+| 旧机 | **待命**：4 个任务全部 unload、服务已停；数据与 plist 保留（1 分钟可切回）✓ |
+
+### 迁移中修掉的可移植性问题
+- 脚本硬编码 `/opt/homebrew/bin/python3` ✗ → 改为 `command -v /opt/homebrew/bin/python3 || command -v python3` ✓
+- `daily_agent.sh` 硬编码 nvm node 版本目录里的 `dsh` ✗ → 改为 `ls -d ~/.nvm/versions/node/*/bin/dsh | tail -1` 自动解析 ✓
+- restic：GitHub 在新机不可达 ✗ → 在旧机下载 **darwin/amd64** 二进制后传输 ✓；SSH 密钥 + known_hosts 同步后 NAS 仓库可用 ✓
+- 封面缓存键含 mtime ✗（新机 mtime 不同 → 全 404）→ 按"旧键→新键"重映射搬迁 **451 张** + 之前 446 张 = **1550 个缓存** ✓（其余按需在首次打开时生成）
+
+### 验证（迁移后）
+| 项 | 结果 |
+|---|---|
+| 公网 `/api/health` | **3/3 = 200（47~71ms）** ✓ · 并发 20 全 200 ✓ |
+| 书库 | **1326 本** ✓ |
+| 封面（公网抽查 3 本）| **3/3 = 200** ✓ |
+| 云端书下载 | **200 / 53KB / 1.5s** ✓（iCloud 取回正常）|
+| **新机 Agent 实跑** | **13:17:07→13:24:18 rc=0** ✓：巡检 6 篇（T3 5 篇 AI 手册/用户已拒；下载 **3 本**）· 书库 1323→1326 · 清单刷新 · 索引重建 1353 本 |
+| 备份 | restic 连上 NAS 仓库，可见 2 个历史快照 ✓ |
+| 两机负载 | 新机 **4.7** · 旧机 16.3（其他工作，不再承接 EBM）|
+
+### 回滚方式
+1. ECS：把 upstream 改回 `100.71.251.38:6722` 并 reload
+2. 旧机：`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.ebm.server.plist`（+ 其他三个）
+3. 新机：bootout 对应任务（可选）
+
+### 注意
+- 阅读器推送端口会变 → 在网页右上「📤 阅读器」重新获取地址
+- 部分书封面需首次打开后生成（缓存已迁 1550 个）
+- **管道只在一台机器上跑**（旧机任务已停），避免双写 iCloud
+
+---
+
 ## v1.18.5 · 504 单次抖动：重试窗口加宽（5s × 5 次 / 60s）
 **2026-11-18 12:50**
 
