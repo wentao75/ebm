@@ -5,6 +5,30 @@
 
 ---
 
+## v1.19.2 · 完全磁盘访问的验证 + Agent 提示词恢复
+**2026-11-19 12:40**
+
+### 用户操作
+已为 `node` 可执行文件授予**完全磁盘访问**（`~/.nvm/versions/node/v24.22.3/bin/node`）。
+
+### 验证（`dsh --profile headless` 实测）
+| 测试 | 结果 |
+|---|---|
+| 读取 iCloud 书库 | `ls …/eBooks \| wc -l` → **46** ✓（不再挂起/报 257）|
+| 写入 iCloud 书库 | 创建 `_perm_test.txt` 再删除 → `created-and-removed` ✓（无残留 ✓）|
+
+→ **Agent 现在可直接读写 iCloud** ✓，之前"绕道 EBM API"的权宜之计不再必需 ✓
+
+### 变更
+- `daily_agent.sh` 提示词：把「headless 无 iCloud 权限」改为「iCloud 已授予完全磁盘访问，可直接运行
+  `recommend.py apply` / `move_to_icloud.py` / `meta_*.py`」；仅保留"若仍报错则用 EBM API 兜底" ✓
+- 昨日 18 分钟的权限摸索不会再复现 ✓
+
+### 状态
+- 书库 1329 本 · 四任务 exit=0 · 负载 3.3 ✓
+
+---
+
 ## v1.19.1 · 迁移后首日运行核查 + 备份 restic PATH 修复
 **2026-11-19 12:30**
 
