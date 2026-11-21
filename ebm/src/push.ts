@@ -65,6 +65,10 @@ export async function setPushTarget(raw: string): Promise<string> {
 }
 
 export interface DeviceStatus {
+  /** 传书服务类型：stock=原厂传书（/config + /upload, 字段 sfile）；iflytek=讯飞阅读传书（/doupload, 字段 file） */
+  mode?: "stock" | "iflytek";
+  /** iflytek 模式下的上传地址（含 id 参数） */
+  uploadUrl?: string;
   target: string;
   reachable: boolean;
   /** 设备声明的 pdf/mobi/azw3 单文件上限（MB） */
@@ -88,6 +92,30 @@ function httpGetJson(url: string, timeoutMs: number): Promise<{ status: number; 
   });
 }
 
+/**
+ * 解析讯飞阅读「WiFi 传书」页面的上传地址。
+ * 该页面没有 /config；上传配置在 common.js 里：url = /doupload?dir=/sdcard/&id=<uuid>
+ * （端口每次打开传书页面可能变，id 也可能变 → 每次都从页面现取）
+ */
+async function resolveIflytekUpload(target: string, timeoutMs: number): Promise<string | null> {
+  try {
+    const page = await httpGetJson(`${target}/`, timeoutMs);
+    if (page.status !== 200) return null;
+    if (!/doupload|WiFi\s*传书|传书/i.test(page.body)) return null;
+    let js = "";
+    const m = page.body.match(/<script[^>]+src="([^"]*common\.js)"/i);
+    if (m) {
+      const src = /^https?:/i.test(m[1]) ? m[1] : `${target}${m[1].startsWith("/") ? "" : "/"}${m[1]}`;
+      const r = await httpGetJson(src, timeoutMs);
+      if (r.status === 200) js = r.body;
+    }
+    const hit = js.match(/\/doupload\?[^"'\s<>]+/i) || page.body.match(/\/doupload\?[^"'\s<>]+/i);
+    return hit ? `${target}${hit[0]}` : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 探测设备是否在线 + 读取其文件大小上限 */
 export async function probeDevice(timeoutMs = 3000): Promise<DeviceStatus> {
   const target = await pushTarget();
@@ -95,6 +123,9 @@ export async function probeDevice(timeoutMs = 3000): Promise<DeviceStatus> {
   try {
     const r = await httpGetJson(`${target}/config`, timeoutMs);
     if (r.status !== 200) {
+      // 讯飞阅读的传书没有 /config → 探测其 WiFi 传书页面
+      const up = await resolveIflytekUpload(target, timeoutMs);
+      if (up) return { target, reachable: true, mode: "iflytek", uploadUrl: up, ms: Date.now() - t0 };
       return { target, reachable: false, ms: Date.now() - t0, error: `设备返回 HTTP ${r.status}` };
     }
     let limit: number | undefined;
@@ -106,6 +137,9 @@ export async function probeDevice(timeoutMs = 3000): Promise<DeviceStatus> {
     }
     return { target, reachable: true, fileSizeLimit: limit, ms: Date.now() - t0 };
   } catch (err) {
+    // /config 请求异常（讯飞阅读传书对未知路径直接断开 → socket hang up）→ 也尝试识别其传书页面
+    const up = await resolveIflytekUpload(target, timeoutMs);
+    if (up) return { target, reachable: true, mode: "iflytek", uploadUrl: up, ms: Date.now() - t0 };
     const raw = (err as Error)?.message || String(err);
     // 设备只有在「传书」页面打开时才监听端口；ECONNREFUSED 通常就是这个原因
     const hint = /ECONNREFUSED|EHOSTUNREACH|ETIMEDOUT|超时/.test(raw)
@@ -147,17 +181,26 @@ export async function pushFile(abs: string, filename: string, timeoutMs = 180_00
     };
   }
 
+  // 按设备类型选择上传地址与表单字段名
+  let uploadUrl = `${target}/upload`;
+  let fieldName = "sfile";
+  if (device.mode === "iflytek") {
+    const up = device.uploadUrl || (await resolveIflytekUpload(target, 5000));
+    if (!up) return { ok: false, target, bytes: st.size, ms: Date.now() - t0, error: "未能从讯飞阅读传书页面解析上传地址" };
+    uploadUrl = up;
+    fieldName = "file";
+  }
   const boundary = `----ebm${crypto.randomBytes(8).toString("hex")}`;
   const safeName = filename.replace(/[\r\n"]/g, "_");
   // 分片头用 UTF-8 字节（与 curl 一致）：设备按 UTF-8 显示中文文件名
   const head = Buffer.from(
     `--${boundary}\r\n` +
-      `Content-Disposition: form-data; name="sfile"; filename="${safeName}"\r\n` +
+      `Content-Disposition: form-data; name="${fieldName}"; filename="${safeName}"\r\n` +
       "Content-Type: application/octet-stream\r\n\r\n",
     "utf-8",
   );
   const tail = Buffer.from(`\r\n--${boundary}--\r\n`, "utf-8");
-  const url = new URL(`${target}/upload`);
+  const url = new URL(uploadUrl);
 
   return new Promise<PushResult>((resolve) => {
     let settled = false;
