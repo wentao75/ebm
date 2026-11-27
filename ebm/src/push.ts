@@ -17,6 +17,7 @@ import fsp from "fs/promises";
 import http from "http";
 import path from "path";
 import { DATA_DIR } from "./paths";
+import { appendPushLog } from "./pushlog";
 
 /** 未配置时的默认设备地址（用户实际设备，可在 data/push-target.json 覆盖） */
 export const DEFAULT_TARGET = "http://192.168.3.74:50071";
@@ -117,8 +118,8 @@ async function resolveIflytekUpload(target: string, timeoutMs: number): Promise<
 }
 
 /** 探测设备是否在线 + 读取其文件大小上限 */
-export async function probeDevice(timeoutMs = 3000): Promise<DeviceStatus> {
-  const target = await pushTarget();
+export async function probeDevice(timeoutMs = 3000, targetOverride?: string): Promise<DeviceStatus> {
+  const target = targetOverride || (await pushTarget());
   const t0 = Date.now();
   try {
     const r = await httpGetJson(`${target}/config`, timeoutMs);
@@ -149,6 +150,111 @@ export async function probeDevice(timeoutMs = 3000): Promise<DeviceStatus> {
   }
 }
 
+/**
+ * 书名键：把设备上的文件名（带 `[号码]` 前缀）与本地文件名归一成同一个键。
+ * 规则：去 `[号码]` 前缀 → 去【…】站标 → 去扩展名 → 去空白与标点 → 小写。
+ * 用来判断「这本书是不是已经在设备上了」，不受前缀、格式、标点差异影响。
+ */
+export function bookKey(name: string): string {
+  let s = String(name || "");
+  s = s.replace(/^\[\d+\]/, "");
+  s = s.replace(/【[^】]*】/g, "");
+  const dot = s.lastIndexOf(".");
+  // 扩展名参与比对：同名不同格式（PDF / EPUB）不算重复；`.sdr` 进度目录也不会误判成书
+  const ext = dot > 0 ? s.slice(dot + 1).toLowerCase() : "";
+  const base = dot > 0 ? s.slice(0, dot) : s;
+  const key = base.replace(/[\s\-_·.,，。：:;；!！?？"“”'’()（）\[\]【】]/g, "").toLowerCase();
+  return ext ? `${key}.${ext}` : key;
+}
+
+/** 设备侧的一本书（两种传书页返回的结构不同，统一成这个形状） */
+export interface DeviceFileEntry {
+  /** 文件名（起点传书带 `[号码]` 前缀；讯飞阅读不带） */
+  name: string;
+  /** 字节数（只有讯飞阅读的 `/fils` 给） */
+  size?: number;
+  /** 设备侧分组（讯飞阅读返回「书架」） */
+  path?: string;
+  /** 设备侧时间戳（ms，讯飞阅读给） */
+  date?: number;
+}
+
+/**
+ * 读取设备传书页的文件清单。设备只在传书页面打开时监听，失败返回 null 而不是抛错。
+ * 两种传书页协议不同，依次尝试：
+ *   起点阅读器：GET /files → ["[3369225]《…》作者.pdf", …]（只有名字）
+ *   讯飞阅读：  GET /fils  → {code:200, data:[{name,size,path,date}, …]}（带体积/分组）
+ * mode 已知时只探对应的那个，省掉一次必失败的请求。
+ */
+export async function listDeviceFiles(
+  target: string,
+  timeoutMs = 4000,
+  mode?: "stock" | "iflytek",
+): Promise<DeviceFileEntry[] | null> {
+  const isBook = (n: string): boolean => !n.endsWith(".sdr"); // `.sdr` 是阅读进度目录，不是书
+  if (mode !== "iflytek") {
+    try {
+      const r = await httpGetJson(`${target}/files`, timeoutMs);
+      if (r.status === 200) {
+        const arr: unknown = JSON.parse(r.body);
+        if (Array.isArray(arr)) {
+          return arr
+            .filter((x): x is string => typeof x === "string" && isBook(x))
+            .map((name) => ({ name }));
+        }
+      }
+    } catch {
+      /* 讯飞传书对未知路径直接断开 → 落到 /fils */
+    }
+  }
+  if (mode === "stock") return null;
+  try {
+    const r = await httpGetJson(`${target}/fils`, timeoutMs);
+    if (r.status !== 200) return null;
+    const obj = JSON.parse(r.body) as { data?: unknown };
+    if (!Array.isArray(obj.data)) return null;
+    return (obj.data as DeviceFileEntry[]).filter(
+      (e) => e && typeof e.name === "string" && isBook(e.name),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** 设备上已有的同名文件（返回设备侧原始文件名，含 `[号码]` 前缀） */
+export async function findDeviceDuplicates(
+  filename: string,
+  target: string,
+  timeoutMs = 4000,
+  mode?: "stock" | "iflytek",
+): Promise<{ checked: boolean; matches: string[]; details: DeviceFileEntry[] }> {
+  const files = await listDeviceFiles(target, timeoutMs, mode);
+  if (!files) return { checked: false, matches: [], details: [] };
+  const key = bookKey(filename);
+  const details = files.filter((f) => bookKey(f.name) === key);
+  return { checked: true, matches: details.map((d) => d.name), details };
+}
+
+/** 上传后回读设备清单，找出这笔记录对应的设备文件名（带 `[号码]` 前缀） */
+async function learnDeviceName(
+  target: string,
+  filename: string,
+  before: DeviceFileEntry[] | null,
+  mode?: "stock" | "iflytek",
+): Promise<string | undefined> {
+  const after = await listDeviceFiles(target, 4000, mode);
+  if (!after) return undefined;
+  const key = bookKey(filename);
+  const cands = after.filter((f) => bookKey(f.name) === key);
+  if (!cands.length) return undefined;
+  if (before) {
+    const seen = new Set(before.map((b) => b.name));
+    const fresh = cands.filter((f) => !seen.has(f.name));
+    if (fresh.length) return fresh[fresh.length - 1].name;
+  }
+  return cands[cands.length - 1].name;
+}
+
 export interface PushResult {
   ok: boolean;
   target: string;
@@ -156,11 +262,27 @@ export interface PushResult {
   ms: number;
   /** 设备返回的提示（成功时通常是"上传成功"） */
   message?: string;
+  /** 设备实际保存的文件名（带 `[号码]` 前缀；回读失败时缺省） */
+  deviceName?: string;
+  /** true = 因为设备上已有同名书而没有上传（force 可跳过） */
+  duplicate?: boolean;
+  /** duplicate 为 true 时，设备上已存在的文件名 */
+  existing?: string[];
   error?: string;
 }
 
 /** 把本地文件作为 multipart 字段 sfile 推送到设备 */
-export async function pushFile(abs: string, filename: string, timeoutMs = 180_000): Promise<PushResult> {
+export interface PushOptions {
+  /** true = 即使设备上已有同名书也照传（用户在界面上确认过） */
+  force?: boolean;
+}
+
+export async function pushFile(
+  abs: string,
+  filename: string,
+  timeoutMs = 180_000,
+  opts: PushOptions = {},
+): Promise<PushResult> {
   const target = await pushTarget();
   const t0 = Date.now();
   const st = await fsp.stat(abs).catch(() => null);
@@ -179,6 +301,25 @@ export async function pushFile(abs: string, filename: string, timeoutMs = 180_00
       ms: Date.now() - t0,
       error: `文件 ${(st.size / 1024 / 1024).toFixed(1)}MB 超过阅读器上限 ${device.fileSizeLimit}MB`,
     };
+  }
+
+  // 推送前查重：设备上书名键相同就算「已经传过」（设备给新文件加 [号码] 前缀，必须去前缀比对）
+  const before = await listDeviceFiles(target, 4000, device.mode);
+  if (before && !opts.force) {
+    const key = bookKey(filename);
+    const dups = before.filter((f) => bookKey(f.name) === key);
+    if (dups.length) {
+      const dups_ = dups.map((d) => (d.size ? `${d.name}（${(d.size / 1024 / 1024).toFixed(1)}MB）` : d.name));
+      return {
+        ok: false,
+        duplicate: true,
+        existing: dups.map((d) => d.name),
+        target,
+        bytes: st.size,
+        ms: Date.now() - t0,
+        error: `阅读器上已有同名书：${dups_.join("、")}`,
+      };
+    }
   }
 
   // 按设备类型选择上传地址与表单字段名
@@ -227,7 +368,7 @@ export async function pushFile(abs: string, filename: string, timeoutMs = 180_00
         let body = "";
         res.setEncoding("utf-8");
         res.on("data", (c: string) => (body += c));
-        res.on("end", () => {
+        res.on("end", async () => {
           let msg = "";
           try {
             msg = String((JSON.parse(body) as { msg?: unknown }).msg || "");
@@ -235,14 +376,21 @@ export async function pushFile(abs: string, filename: string, timeoutMs = 180_00
             msg = body.slice(0, 120);
           }
           const ok = (res.statusCode || 0) === 200;
-          done({
-            ok,
-            target,
-            bytes: st.size,
-            ms: Date.now() - t0,
-            message: msg || undefined,
-            error: ok ? undefined : `设备返回 HTTP ${res.statusCode}${msg ? "：" + msg : ""}`,
-          });
+          if (!ok) {
+            done({
+              ok: false,
+              target,
+              bytes: st.size,
+              ms: Date.now() - t0,
+              message: msg || undefined,
+              error: `设备返回 HTTP ${res.statusCode}${msg ? "：" + msg : ""}`,
+            });
+            return;
+          }
+          // 回读设备清单拿到带 [号码] 前缀的真实文件名，再记一笔推送历史
+          const deviceName = await learnDeviceName(target, filename, before, device.mode);
+          await appendPushLog({ name: filename, deviceName, bytes: st.size, at: Date.now(), ok: true });
+          done({ ok: true, target, bytes: st.size, ms: Date.now() - t0, message: msg || undefined, deviceName });
         });
       },
     );

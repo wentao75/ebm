@@ -26,7 +26,9 @@ import { queryArchive } from "./recoArchive";
 import { restoreRejected, restoreStatus } from "./recoRestore";
 import { pathAliases, performRename, planRename, RenameLog, suggestFileName, undoRename } from "./rename";
 import { BookFile, LIBRARY_ROOT, LibraryScanner } from "./scanner";
-import { probeDevice, pushFile, pushTarget, setPushTarget } from "./push";
+import { bookKey, probeDevice, pushFile, pushTarget, setPushTarget } from "./push";
+import { readPushLog } from "./pushlog";
+import { deleteDeviceFile, deviceContentType, deviceFilesAll, discoverTransferPages, openDeviceFile, rememberDeviceTarget } from "./device";
 import { convertId, convertToEpub, convertedAbs, findConverted } from "./convert";
 import { auditMeta, parseDoubanId, rematchMeta, updateMetaByDouban } from "./metaLink";
 import { isShelfName, normPage, ShelfStore, validRel } from "./shelves";
@@ -648,6 +650,8 @@ app.post("/api/push/target", async (c) => {
     return json(c, { ok: false, error: (err as Error)?.message || "地址无效" }, 400);
   }
   const st = await probeDevice();
+  // 探测成功的地址顺手记下来：设备文件页会把它作为一个分组列出
+  if (st.reachable) await rememberDeviceTarget(st.target, st.mode === "iflytek" ? "讯飞阅读" : "起点阅读器");
   return json(c, { ok: true, saved: true, ...st });
 });
 
@@ -719,15 +723,76 @@ app.get("/api/converted/:id", async (c) => {
 
 app.get("/api/push/status", async (c) => json(c, await probeDevice()));
 
+// ---------- 设备文件管理（阅读器传书页）----------
+// 列表：讯飞阅读 /fils（带体积）+ 重复分组；起点传书只有 /files，故 canDelete=false
+// 一次返回所有已知传书页（当前推送目标 + 历史地址），前端分组展示
+app.get("/api/device/files", async (c) => json(c, await deviceFilesAll()));
+
+// 自动发现：扫设备端口找传书页并登记（起点端口每次打开都变）
+app.post("/api/device/discover", async (c) => {
+  try {
+    const body = (await c.req.json().catch(() => null)) as { deep?: unknown } | null;
+    const deep = body?.deep === true || c.req.query("deep") === "1";
+    const r = await discoverTransferPages({ deep });
+    return json(c, { ok: true, ...r, ...(await deviceFilesAll()) });
+  } catch (err) {
+    return json(c, { ok: false, error: (err as Error)?.message || String(err) }, 400);
+  }
+});
+
+// 手动登记一个传书页地址（不改推送目标，只让它出现在设备页里）
+app.post("/api/device/targets", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { url?: unknown; label?: unknown } | null;
+  const raw = typeof body?.url === "string" ? body.url.trim() : "";
+  if (!/^https?:\/\/[^\s]+$/i.test(raw)) return json(c, { ok: false, error: "地址需形如 http://192.168.3.74:52000" }, 400);
+  const label = typeof body?.label === "string" ? body.label : undefined;
+  await rememberDeviceTarget(raw.replace(/\/+$/, ""), label);
+  return json(c, { ok: true, ...(await deviceFilesAll()) });
+});
+
+// 删除：只有讯飞阅读支持（POST /dodelete，fname + path）
+app.post("/api/device/delete", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { name?: unknown; path?: unknown; url?: unknown } | null;
+  const name = typeof body?.name === "string" ? body.name : "";
+  const dir = typeof body?.path === "string" ? body.path : "";
+  const url = typeof body?.url === "string" ? body.url : undefined;
+  const r = await deleteDeviceFile(name, dir, 8000, url);
+  return json(c, r, r.ok ? 200 : 400);
+});
+
+// 下载：把设备上的书直接取回浏览器（设备静态服务 /sdcard/<dir>/<name>）
+app.get("/api/device/file", async (c) => {
+  const name = c.req.query("name") || "";
+  const dir = c.req.query("path") || "";
+  const url = c.req.query("url") || undefined;
+  const r = await openDeviceFile(name, dir, 15_000, url);
+  if (!r) return c.text("设备未连接，或文件不存在", 502);
+  const headers: Record<string, string> = {
+    "content-type": deviceContentType(name),
+    "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
+  };
+  if (r.length) headers["content-length"] = r.length;
+  return c.newResponse(Readable.toWeb(r.stream) as unknown as ReadableStream, { status: 200, headers });
+});
+
+// 这本书的推送历史：详情页显示「已推送 N 次 · 设备上是 [号码]书名」
+app.get("/api/push/log", async (c) => {
+  const name = c.req.query("name") || "";
+  const all = await readPushLog();
+  const entries = name ? all.filter((e) => bookKey(e.name) === bookKey(name)) : all.slice(-50);
+  return json(c, { ok: true, count: entries.length, entries: entries.slice(-5).reverse() });
+});
+
 app.post("/api/push/send", async (c) => {
-  const body = (await c.req.json().catch(() => null)) as { rel?: unknown; converted?: unknown } | null;
-  // 支持两种来源：书库原文件 {rel} 或已转换的 EPUB {converted: id}
+  const body = (await c.req.json().catch(() => null)) as { rel?: unknown; converted?: unknown; force?: unknown } | null;
+  // 支持两种来源：书库原文件 {rel} 或已转换的 EPUB {converted: id}；force=true 表示用户确认要再传一份
+  const force = body?.force === true;
   const convertedId = typeof body?.converted === "string" ? body.converted : "";
   if (convertedId) {
     const rec = await findConverted(convertedId);
     if (!rec) return json(c, { ok: false, error: "找不到该转换结果（可能已被清理）" }, 404);
-    const r = await pushFile(convertedAbs(rec), `${rec.title}.epub`);
-    return json(c, r, r.ok ? 200 : 502);
+    const r = await pushFile(convertedAbs(rec), `${rec.title}.epub`, 180_000, { force });
+    return json(c, r, r.ok ? 200 : r.duplicate ? 409 : 502);
   }
   const rel = typeof body?.rel === "string" ? body.rel : "";
   if (!rel) return json(c, { ok: false, error: "缺少 rel 或 converted" }, 400);
@@ -748,8 +813,8 @@ app.post("/api/push/send", async (c) => {
       return json(c, { ok: false, pendingMaterialize: true, error: "该书在 iCloud 尚未取回完成，已开始下载，请稍后重试" }, 202);
     }
   }
-  const r = await pushFile(abs, path.basename(rel));
-  return json(c, r, r.ok ? 200 : 502);
+  const r = await pushFile(abs, path.basename(rel), 180_000, { force });
+  return json(c, r, r.ok ? 200 : r.duplicate ? 409 : 502);
 });
 
 app.post("/api/pipeline/download", async (c) => {

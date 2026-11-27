@@ -46,15 +46,38 @@ async function pushWithFormat(fmt: "orig" | "epub"): Promise<void> {
   }
   try {
     const body = fmt === "epub" && convertedInfo ? { converted: convertedInfo.id } : { rel };
-    const res = await fetch("/api/push/send", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; bytes?: number; ms?: number; message?: string; error?: string };
+    type SendResp = { ok?: boolean; bytes?: number; ms?: number; message?: string; error?: string; duplicate?: boolean; existing?: string[]; deviceName?: string };
+    const send = async (force: boolean): Promise<{ res: Response; d: SendResp }> => {
+      const res = await fetch("/api/push/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...body, force }),
+      });
+      return { res, d: (await res.json().catch(() => ({}))) as SendResp };
+    };
+    let r = await send(false);
+    // 设备上已有这本书：先问一句，避免又堆出一个 [号码] 副本
+    if (r.res.status === 409 && r.d.duplicate) {
+      const exists = (r.d.existing || []).join("、");
+      const go = await confirmAction({
+        title: "阅读器上已经有这本书",
+        text: exists ? `设备上是：${exists}` : "设备上已有同名书。",
+        hint: "再传一次会多出一份带新号码的副本。要传吗？",
+        okLabel: "仍然再发一份",
+        cancelLabel: "不发了",
+      });
+      if (!go) {
+        toast("已取消：设备上已有这本书");
+        return;
+      }
+      r = await send(true);
+    }
+    const d = r.d;
+    const res = r.res;
     if (res.ok && d.ok) {
       const mb = ((d.bytes || 0) / 1024 / 1024).toFixed(1);
-      toast(`已发送到阅读器（${fmt === "epub" ? "EPUB" : "原文件"}）：${book?.title || rel}（${mb}MB · ${((d.ms || 0) / 1000).toFixed(1)}s）${d.message ? " · " + d.message : ""}`);
+      const saved = d.deviceName ? ` · 设备上保存为 ${d.deviceName}` : "";
+      toast(`已发送到阅读器（${fmt === "epub" ? "EPUB" : "原文件"}）：${book?.title || rel}（${mb}MB · ${((d.ms || 0) / 1000).toFixed(1)}s）${d.message ? " · " + d.message : ""}${saved}`);
     } else {
       toast(`发送失败：${d.error || "HTTP " + res.status}`);
       pushStatusCache = null;
@@ -1612,8 +1635,31 @@ function refreshDetailActions(): void {
   if (titleShelf) titleShelf.innerHTML = detailToggleHtml(rel);
   void refreshPushHint(rel);
   void loadConvertedForDetail(rel);
-  void refreshPushHint(rel);
-  void loadConvertedForDetail(rel);
+  void loadPushLogHint(rel);
+}
+
+/** 详情页推送菜单里显示这本书推过几次（历史来自 data/push-log.json） */
+async function loadPushLogHint(rel: string): Promise<void> {
+  const hint = document.getElementById("dPushMenuHint") as HTMLElement | null;
+  if (!hint) return;
+  const name = rel.split("/").pop() || rel;
+  try {
+    const d = (await (await fetch(`/api/push/log?name=${encodeURIComponent(name)}`)).json()) as {
+      count?: number;
+      entries?: { at?: number; deviceName?: string }[];
+    };
+    if (detailRel !== rel) return;
+    const n = d.count || 0;
+    if (!n) {
+      hint.textContent = "尚未推送到阅读器";
+      return;
+    }
+    const last = d.entries?.[0];
+    const when = last?.at ? new Date(last.at).toLocaleString("zh-CN", { hour12: false }) : "";
+    hint.textContent = `已推送 ${n} 次${last?.deviceName ? ` · 设备上是 ${last.deviceName}` : ""}${when ? ` · 最近 ${when}` : ""}`;
+  } catch {
+    hint.textContent = "";
+  }
 }
 
 async function openDetail(rel: string): Promise<void> {
@@ -2463,6 +2509,20 @@ async function boot(): Promise<void> {
   $("#metaCatalog").addEventListener("click", () => void runMetaTasks(["catalog"]));
   $("#metaAll").addEventListener("click", () => void runMetaTasks(["build", "enrich", "catalog"]));
   $("#btnPushCfg").addEventListener("click", () => void openPushCfg());
+  $("#btnDevice").addEventListener("click", () => openDevicePanel());
+  $("#devClose").addEventListener("click", closeDevicePanel);
+  $("#devRefresh").addEventListener("click", () => void loadDeviceFiles());
+  $("#devAddUrl").addEventListener("click", () => void addDeviceTarget());
+  $("#devDiscover").addEventListener("click", () => void discoverDevicePages(false));
+  $("#devDiscoverDeep").addEventListener("click", () => void discoverDevicePages(true));
+  $("#devMask").addEventListener("click", (ev) => {
+    if (ev.target === $("#devMask")) closeDevicePanel();
+  });
+  $("#devBody").addEventListener("click", (ev) => {
+    const btn = (ev.target as HTMLElement).closest("[data-devdel]") as HTMLElement | null;
+    if (!btn) return;
+    void deleteDeviceBook(btn.dataset.devdel || "", btn.dataset.devpath || "", btn.dataset.devurl || "");
+  });
   $("#pushCancel").addEventListener("click", closePushCfg);
   $("#metaLinkCancel").addEventListener("click", closeMetaLink);
   $("#btnAudit").addEventListener("click", () => void openAudit());
@@ -2615,6 +2675,194 @@ async function boot(): Promise<void> {
     $("#logMask").classList.add("hidden");
     if (activeTab === "reco") void loadReco();
   });
+}
+
+// ---------- 设备文件管理（阅读器传书页：列清单 / 删除 / 下载）----------
+interface DeviceRow {
+  name: string;
+  size?: number;
+  path?: string;
+  date?: number;
+  key: string;
+  duplicate: boolean;
+}
+interface DeviceView {
+  ok: boolean;
+  reachable: boolean;
+  target: string;
+  mode?: "stock" | "iflytek";
+  canDelete: boolean;
+  files: DeviceRow[];
+  duplicateGroups: Array<{ key: string; names: string[] }>;
+  error?: string;
+}
+
+function openDevicePanel(): void {
+  $("#devMask").classList.remove("hidden");
+  void loadDeviceFiles();
+}
+
+function closeDevicePanel(): void {
+  $("#devMask").classList.add("hidden");
+}
+
+async function loadDeviceFiles(): Promise<void> {
+  const body = $("#devBody");
+  const hint = $("#devHint");
+  const stat = $("#devStat");
+  hint.textContent = "正在读取设备…";
+  stat.textContent = "";
+  body.innerHTML = "";
+  try {
+    const d = (await (await fetch("/api/device/files")).json()) as { groups?: DeviceView[] };
+    const groups = d.groups || [];
+    if (!groups.length) {
+      hint.textContent = "没有登记任何传书页地址";
+      return;
+    }
+    const online = groups.filter((g) => g.ok);
+    stat.textContent = `· ${online.length}/${groups.length} 个传书页在线`;
+    if (!online.length) {
+      hint.textContent = "所有传书页都未连接（在阅读器上打开「传书」页面后点刷新）";
+    } else {
+      const total = online.reduce((n, g) => n + g.files.length, 0);
+      const bytes = online.reduce((n, g) => n + g.files.reduce((m, r) => m + (r.size || 0), 0), 0);
+      const dups = online.reduce((n, g) => n + g.duplicateGroups.length, 0);
+      // 起点通道不报体积，全为 0 时不显示"合计"，免得给出 1KB 这种误导数字
+      const sizeText = bytes ? ` · 合计 ${fmtSize(bytes)}` : "";
+      hint.textContent = `共 ${total} 本${sizeText}${dups ? ` · ⚠ ${dups} 组重复` : " · 无重复"}`;
+    }
+    body.innerHTML = groups.map(renderDeviceGroup).join("");
+  } catch (err) {
+    hint.textContent = `读取异常：${String(err)}`;
+  }
+}
+
+/** 渲染一个传书页分组（标题行 + 该页的书） */
+function renderDeviceGroup(g: DeviceView): string {
+  const kind = g.mode === "iflytek" ? "讯飞阅读 · 书架" : g.mode === "stock" ? "起点阅读器 · 导入目录" : "传书页";
+  const summary = g.ok
+    ? `共 ${g.files.length} 本${g.duplicateGroups.length ? ` · ⚠ ${g.duplicateGroups.length} 组重复` : " · 无重复"}${g.canDelete ? "" : " · 只读"}`
+    : g.error || "未连接";
+  const head = `<tr class="devgroup"><td colspan="5"><b>${esc(kind)}</b> <span class="devstat">${esc(g.target)} · ${esc(summary)}</span></td></tr>`;
+  if (!g.ok || !g.files.length) return head;
+  const rows = [...g.files].sort(
+    (a, b) =>
+      Number(b.duplicate) - Number(a.duplicate) || (b.date || 0) - (a.date || 0) || a.name.localeCompare(b.name),
+  );
+  return (
+    head +
+    rows
+      .map((r) => {
+        const q = `name=${encodeURIComponent(r.name)}&path=${encodeURIComponent(r.path || "")}&url=${encodeURIComponent(g.target)}`;
+        const ops = [
+          `<a class="btn tiny" href="/api/device/file?${q}" download="${esc(r.name)}" title="从设备下载到本机">⬇</a>`,
+          g.canDelete
+            ? `<button class="btn tiny" data-devdel="${esc(r.name)}" data-devpath="${esc(r.path || "")}" data-devurl="${esc(g.target)}" title="从设备删除">🗑</button>`
+            : "",
+        ].join(" ");
+        return `<tr>
+        <td class="devname">${esc(r.name)}${r.duplicate ? '<span class="devbadge">重复</span>' : ""}</td>
+        <td class="num">${r.size ? fmtSize(r.size) : "—"}</td>
+        <td>${r.date ? new Date(r.date).toLocaleDateString("zh-CN") : "—"}</td>
+        <td>${esc(r.path || "—")}</td>
+        <td class="ops">${ops}</td>
+      </tr>`;
+      })
+      .join("")
+  );
+}
+
+async function discoverDevicePages(deep = false): Promise<void> {
+  const btn = (deep ? $("#devDiscoverDeep") : $("#devDiscover")) as HTMLButtonElement;
+  const hint = $("#devHint");
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = deep ? "🌐 扫描中…" : "🔍 探测中…";
+  hint.textContent = deep ? "正在扫描全部端口（约 15 秒）…" : "正在探测已知端口（讯飞固定 50006 / 已登记地址）…";
+  try {
+    const res = await fetch("/api/device/discover", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deep }),
+    });
+    const d = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      stage?: "fast" | "full";
+      scanned?: number;
+      pages?: Array<{ url: string; mode: string }>;
+      ms?: number;
+    };
+    if (res.ok && d.ok) {
+      const n = (d.pages || []).length;
+      const secs = ((d.ms || 0) / 1000).toFixed(1);
+      toast(
+        d.stage === "fast"
+          ? `已命中 ${n} 个已知传书页（${secs}s，未扫端口）`
+          : `扫描 ${d.scanned || 0} 个端口，发现 ${n} 个传书页（${secs}s）`,
+      );
+      void loadDeviceFiles();
+    } else {
+      toast(`自动发现失败：${d.error || "HTTP " + res.status}`);
+      hint.textContent = "自动发现失败";
+    }
+  } catch (err) {
+    toast(`自动发现异常：${String(err)}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+async function addDeviceTarget(): Promise<void> {
+  const input = $("#devUrlInput") as HTMLInputElement;
+  const url = (input.value || "").trim();
+  if (!url) {
+    toast("先粘贴一个传书页地址");
+    return;
+  }
+  try {
+    const res = await fetch("/api/device/targets", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+    if (res.ok && d.ok) {
+      toast("已登记，正在刷新…");
+      input.value = "";
+      void loadDeviceFiles();
+    } else {
+      toast(`登记失败：${d.error || "HTTP " + res.status}`);
+    }
+  } catch (err) {
+    toast(`登记异常：${String(err)}`);
+  }
+}
+
+async function deleteDeviceBook(name: string, dir: string, url: string): Promise<void> {
+  const ok = await confirmAction({
+    title: "从阅读器删除这本书？",
+    text: name,
+    hint: "直接删掉设备上的文件；删前请确认书库里有备份。",
+    okLabel: "删除",
+    cancelLabel: "取消",
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch("/api/device/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, path: dir, url }),
+    });
+    const d = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; error?: string };
+    if (res.ok && d.ok) toast(`已从设备删除：${name}`);
+    else toast(`删除失败：${d.error || "HTTP " + res.status}`);
+  } catch (err) {
+    toast(`删除异常：${String(err)}`);
+  }
+  void loadDeviceFiles();
 }
 
 void boot();

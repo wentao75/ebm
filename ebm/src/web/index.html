@@ -14,6 +14,7 @@
     <span id="stats" class="stats"></span>
     <button id="btnMeta" class="btn" title="书目元数据补全（简介覆盖率 / 一键补简介）">🗂 元数据</button>
     <button id="btnPushCfg" class="btn" title="设置阅读器地址：在阅读器上打开「传书」页面，把显示的网址粘进来">📤 阅读器</button>
+    <button id="btnDevice" class="btn" title="管理阅读器上的书：列出 / 删除 / 下载（需先在设备上打开「传书」页面）">📁 设备</button>
     <button id="btnAudit" class="btn" title="元数据体检：找出可能配错的书，逐本重新匹配或按链接替换">🧹 体检</button>
   </header>
 
@@ -214,6 +215,29 @@
         <button class="btn primary" id="pushSave">保存并测试</button>
       </div>
       <p class="muted" id="pushResult"></p>
+    </div>
+  </div>
+
+  <div id="devMask" class="mask hidden">
+    <div class="dialog wide devdlg">
+      <h3>设备文件 <span class="devstat" id="devStat"></span></h3>
+      <p class="muted" id="devHint">正在读取设备…</p>
+      <div class="devadd">
+        <input id="devUrlInput" class="pushurl" placeholder="再加一个传书页地址，如 http://192.168.3.74:52000（起点）" spellcheck="false" autocomplete="off" />
+        <button class="btn tiny" id="devAddUrl">登记</button>
+        <button class="btn tiny" id="devDiscover" title="先探已知端口（讯飞固定 50006、已登记地址），命中即返回">🔍 自动发现</button>
+        <button class="btn tiny" id="devDiscoverDeep" title="扫全部端口，找起点这类随机端口（约 15 秒）">🌐 全端口</button>
+      </div>
+      <div class="devwrap">
+        <table class="devtable">
+          <thead><tr><th>书名</th><th class="num">体积</th><th>日期</th><th>分组</th><th class="ops">操作</th></tr></thead>
+          <tbody id="devBody"></tbody>
+        </table>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" id="devRefresh">🔄 刷新</button>
+        <button class="btn primary" id="devClose">关闭</button>
+      </div>
     </div>
   </div>
 

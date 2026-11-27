@@ -90,3 +90,7 @@ calibre-*.md
 retire-*.sh
 preserve-calibre*.py
 verify-calibre*.py
+
+# Playwright 截图/快照等临时产物
+output/
+.playwright-cli/
